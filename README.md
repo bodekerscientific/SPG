@@ -1,0 +1,2 @@
+# SPG
+Stochastic precipitation generator
