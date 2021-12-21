@@ -25,7 +25,7 @@ def get_closest(lat, lng, file_path_list):
 
 if __name__=="__main__":
 
-    ensembles = ["batch_870_ant","batch_871_ant","batch_872_ant"] #Add to list 
+    ensembles = ["batch_870_ant","batch_871_ant","batch_872_ant","batch_794_nat","batch_793_ant"] #Add to list 
     latitude = -45.8741
     longitude = 170.5035
     out_path = "/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/dunedin"
