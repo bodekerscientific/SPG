@@ -1,4 +1,4 @@
-from spg.spg import SPG, cycle
+from spg.generator import SPG, cycle
 from spg.distributions import Dist, RainDay
 
 import jax.numpy as jnp

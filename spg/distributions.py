@@ -49,7 +49,10 @@ class Dist():
     def __init__(self, transforms=[]):
         self.transforms = transforms
 
-    def cdf(self, x):
+    def cdf(self, x, cond=None):
+        raise NotImplementedError('Need to make a subclass')
+
+    def ppf(self, p, cond=None):
         raise NotImplementedError('Need to make a subclass')
 
     def fit(self, data):
@@ -73,6 +76,8 @@ class SSDist(Dist):
 
     def ppf(self, p, cond=None):
         assert self.params is not None
+        assert p >=0 and p <= 1.0
+        
         return self.dist.ppf(p, *self.params)
 
     def fit(self, data):

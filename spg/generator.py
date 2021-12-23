@@ -1,5 +1,6 @@
 import numpy as np
-from .distributions import Dist
+from spg.distributions import Dist 
+
 from jax import random
 import jax.numpy as jnp
 
@@ -15,6 +16,8 @@ class SPG():
         self.rainday = rainday
         self.dists = rain_dists
         self.rnd_key = random_key
+        self.thresholds = None
+        self.scale_prob = {}
 
         self.dist_thresh = np.array(sorted(rain_dists.keys()))
         assert self.dist_thresh.min() == 0 and self.dist_thresh.max() < 1.0
@@ -29,11 +32,12 @@ class SPG():
         return self.dists[key]
 
     def sample(self, cond):
-        prob_rain, prob_amount = random.uniform(self.rnd_key, (2,))
+        prob_rain, prob_sel, prob_dist = random.uniform(self.rnd_key, (3,))
 
         is_rain = self.rainday.ppf(prob_rain, cond['rainday'])
         if is_rain:
-            rain = self.select_dist(prob_amount, cond['rain'])
+            dist = self.select_dist(prob_sel)
+            rain = dist.ppf(prob_rain, cond['rain'])
         else:
             rain = 0.0
 
@@ -49,3 +53,25 @@ class SPG():
             data_out.append(val)
 
         return np.array(data_out)
+
+    def fit(self, data):
+        self.rainday.fit(data)
+        self.thresholds = np.quantile(data, list(self.dist_thresh) + [1.0])
+        
+        # Ensure we don't miss any data
+        thresh = self.thresholds.copy()
+        thresh[0] -= 1
+        thresh[-1] += 1 
+
+        for lower, upper, key in zip(self.thresholds[:-1], self.thresholds[1:], self.dist_thresh):
+            
+            data_sub = data[(data>=lower) & (data<upper)]
+            print(f'Fitting dist, q={key}, from {lower} to {upper} with {len(data)} datapoints')
+            self.dists[key].fit(data_sub)
+
+            diff = upper-lower
+            assert diff > 0
+            self.scale_prob[key] = diff
+
+
+
