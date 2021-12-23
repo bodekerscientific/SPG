@@ -1,24 +1,50 @@
 import scipy.stats as ss
 from functools import partial
-import jax.numpy as jnp
 import numpy as np
+
+import jax.numpy as jnp
 from jax import nn
+from jax import grad
+from jax import random
+
+
+import matplotlib.pyplot as plt
+from jax.scipy.optimize import minimize
+
 
 def lin_regress(x, y):
     return jnp.linalg.inv(x.T @ x) @ (x.T @ y)
 
-def logistic_regress(x, w, c):
-    return nn.sigmoid(x@w + c)
 
-def logistic_loss(c, w, x, y, eps=1e-14, weight_decay=0.1):
-    n = y.size
-    p = logistic_regress(c, w, x)
-    p = jnp.clip(p, eps, 1 - eps)  # bound the probabilities within (0,1) to avoid ln(0)
-    return -jnp.sum(y * jnp.log(p) + (1 - y) * jnp.log(1 - p)) / n + 0.5 * weight_decay * (
-        jnp.dot(w, w) + c * c
-    )
+def logistic_regress(x, w):
+    return nn.sigmoid(x @ w)
+
+def prob_bin(probs, thresh=0.5):
+    """ Calculates binary predictions """
+    pred_bin = jnp.array(probs)
+    pred_bin = jnp.where(pred_bin < thresh, pred_bin, 1.0)
+    pred_bin = jnp.where(pred_bin >= thresh, pred_bin, 0.0)
+    return pred_bin
 
 
+def logistic_loss(w, x, y, eps=1e-14, weight_decay=0.1):
+    """ Generic nll with regularization from 
+        https://www.architecture-performance.fr/ap_blog/logistic-regression-with-jax/"""
+    #n = y.size
+    p = logistic_regress(x, w)
+    p = jnp.clip(p, eps, 1 - eps)  # bound the probabilities
+    return -jnp.mean(y * jnp.log(p) + (1 - y) * jnp.log(1 - p))+ 0.5 * weight_decay * w@w
+
+
+def nll_loss(preds, targets, eps=1e-14):
+    p = jnp.clip(preds, eps, 1 - eps)
+    y = jnp.clip(targets, eps, 1 - eps)
+    return -jnp.sum(y * jnp.log(p) + (1 - y) * jnp.log(1 - p))
+
+
+def fit(func, params_init, options={"gtol": 1e-5}):
+    return minimize(func, params_init, method="BFGS", options=options)
+    
 class Dist():
     def __init__(self, transforms=[]):
         self.transforms = transforms
@@ -34,6 +60,7 @@ class Dist():
             params = func(params)
         return params
 
+
 class SSDist(Dist):
     def __init__(self, ss_dist, transforms=[]):
         super().__init__(transforms)
@@ -44,47 +71,64 @@ class SSDist(Dist):
         assert self.params is not None
         x = self.eval_tr(x)
 
+    def ppf(self, p, cond=None):
+        assert self.params is not None
+        return self.dist.ppf(p, *self.params)
+
     def fit(self, data):
-        x = self.eval_tr(x)
-
-    def eval_dist(self, params):
-         raise NotImplementedError('Need to make a subclass')
-
-
+        self.params = self.dist.fit(data)
+    
 class RainDay(Dist):
-    def __init__(self, thresh=0.1, ar_depth=1):
+    def __init__(self, thresh=0.1, ar_depth=1, rnd_key=random.PRNGKey(42)):
         """ Calculates wether or not it is a rain day based on the last n dry/wet days """
         super().__init__(self)
         self.thresh = thresh
         self.ar_depth = ar_depth
 
-        self.coefs = jnp.zeros(ar_depth) + 1e-5
-        self.bias = jnp.zeros(1) + 1e-5
-        print(f'Created a transition table with {self.coef} elements')
+        self.params = random.normal(rnd_key, shape=(ar_depth+1, ))
+        self.did_fit = False
 
-    def ppf(self, x):
-        assert np.isfinite(self.prob_table).all()
+        print(f'Created model with {len(self.params)} elements')
 
-        if self.ar_depth > 0:
-            assert len(x) == self.ar_depth + 1, print(f'Need to supply {len(self.ar_depth + 1)} data points for this ar model')
-            is_wet = x[:-1] >= self.thresh
+    def _process_x(self, x, dim):
+        concat = []
+        if x is not None and len(x) > 0:
+            if isinstance(x, list):
+                x = jnp.stack(x, axis=1)
+            concat.append(x)
 
-            return 0.0 if self.prob_table[is_wet] > x[-1] else 1.0  
-        else:
-            return 0.0 if self.prob_table > x else 1.0  
+        # Add the bias        
+        concat.append(jnp.ones((dim, 1)))
 
-    def fit(self, data):
+        return jnp.concatenate(concat, axis=1).astype(float)
+
+    def ppf(self, p, x=None):
+        assert x is None or self.ar_depth > 0
+
+        #assert len(x) == self.ar_depth
+        
+        p = jnp.atleast_1d(p)
+        x = self._process_x(x, dim=len(p))
+
+        return prob_bin(p, thresh=logistic_regress(x, self.params))#.astype(bool)
+
+    def fit(self, data, fit_func=fit):
         cols = []
         # TODO: This assumes that there are no gaps in the time series
         for n in range(self.ar_depth):
-            cols.append(data[n: len(data)-n] > data)
-        cols.append(jnp.ones(len(data) - self.ar_depth))
+            cols.append(data[n: -(self.ar_depth-n)] > self.thresh)
+        
+        y = prob_bin(data[self.ar_depth:], self.thresh)
+        x = self._process_x(cols, dim=len(y))
 
-        x = jnp.stack(cols, dim=1).astype(jnp.float64)        
-        y = data
+        def train_func(params):
+            return logistic_loss(params, x, y)
 
-        # assert np.isfinite(self.prob_table).all(), 'Fit failed, try including reducing the ar depth'
-        # print(f'Minimum count {total.min()}')
+        res = fit_func(train_func, self.params)
+        #res = fit_func(train_func, params_init=self.params)
+        self.params = res.x
+        self.did_fit = res.success
+        
 
 Weibull = partial(SSDist, ss.weibull_min)
 GPD = partial(SSDist, ss.genpareto)
