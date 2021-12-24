@@ -17,7 +17,7 @@ class SPG():
         self.dists = rain_dists
         self.rnd_key = random_key
         self.thresholds = None
-        self.scale_prob = {}
+        self.offset_dist = {}
 
         self.dist_thresh = np.array(sorted(rain_dists.keys()))
         assert self.dist_thresh.min() == 0 and self.dist_thresh.max() < 1.0
@@ -32,16 +32,20 @@ class SPG():
         return self.dists[key]
 
     def sample(self, cond):
-        prob_rain, prob_sel, prob_dist = random.uniform(self.rnd_key, (3,))
+        self.rnd_key, subkey = random.split(self.rnd_key)
 
+        prob_rain, prob_sel, prob_dist = random.uniform(subkey, (3,))
+        
         is_rain = self.rainday.ppf(prob_rain, cond['rainday'])
         if is_rain:
-            dist = self.select_dist(prob_sel)
-            rain = dist.ppf(prob_rain, cond['rain'])
+            dist = self._select_dist(prob_sel)
+            rain = dist.ppf(prob_dist, cond['rain']) + dist.offset + self.rainday.thresh
         else:
             rain = 0.0
 
-        cond_next = {k: cycle(cond[k], v) for k, v in zip(['rainday', 'rain'], [is_rain, rain])}
+        cond_next = {k: cycle(cond[k], v) if cond[k] is not None else None 
+                    for k, v in zip(['rainday', 'rain'], [is_rain, rain])}
+
         return rain, cond_next
 
     def generate(self, num_steps, cond_init: dict):
@@ -56,6 +60,8 @@ class SPG():
 
     def fit(self, data):
         self.rainday.fit(data)
+        
+        data = data[data >= self.rainday.thresh] - self.rainday.thresh
         self.thresholds = np.quantile(data, list(self.dist_thresh) + [1.0])
         
         # Ensure we don't miss any data
@@ -66,12 +72,10 @@ class SPG():
         for lower, upper, key in zip(self.thresholds[:-1], self.thresholds[1:], self.dist_thresh):
             
             data_sub = data[(data>=lower) & (data<upper)]
-            print(f'Fitting dist, q={key}, from {lower} to {upper} with {len(data)} datapoints')
-            self.dists[key].fit(data_sub)
-
-            diff = upper-lower
-            assert diff > 0
-            self.scale_prob[key] = diff
+            print(f'Fitting dist, q={key}, from {lower} to {upper} with {len(data_sub)} datapoints')
+            self.dists[key].fit(data_sub - lower)
+            self.dists[key].offset = lower
+            
 
 
 

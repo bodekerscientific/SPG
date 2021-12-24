@@ -77,11 +77,11 @@ class SSDist(Dist):
     def ppf(self, p, cond=None):
         assert self.params is not None
         assert p >=0 and p <= 1.0
-        
+
         return self.dist.ppf(p, *self.params)
 
     def fit(self, data):
-        self.params = self.dist.fit(data)
+        self.params = self.dist.fit(data, floc=0.0)
     
 class RainDay(Dist):
     def __init__(self, thresh=0.1, ar_depth=1, rnd_key=random.PRNGKey(42)):
@@ -98,8 +98,7 @@ class RainDay(Dist):
     def _process_x(self, x, dim):
         concat = []
         if x is not None and len(x) > 0:
-            if isinstance(x, list):
-                x = jnp.stack(x, axis=1)
+            x = jnp.array(x)
             concat.append(x)
 
         # Add the bias        
@@ -111,7 +110,6 @@ class RainDay(Dist):
         assert x is None or self.ar_depth > 0
 
         #assert len(x) == self.ar_depth
-        
         p = jnp.atleast_1d(p)
         x = self._process_x(x, dim=len(p))
 
@@ -124,7 +122,7 @@ class RainDay(Dist):
             cols.append(data[n: -(self.ar_depth-n)] > self.thresh)
         
         y = prob_bin(data[self.ar_depth:], self.thresh)
-        x = self._process_x(cols, dim=len(y))
+        x = self._process_x(jnp.stack(cols, axis=1), dim=len(y))
 
         def train_func(params):
             return logistic_loss(params, x, y)
