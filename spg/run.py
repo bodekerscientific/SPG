@@ -19,8 +19,8 @@ def load_data(fpath):
 
 def fit_and_generate(data, num_steps=None, plot_folder = Path('./')):
     rd = distributions.RainDay(thresh=0.1, ar_depth=2)
-    rain_dists = {0 : distributions.Weibull(),
-                  0.994 : distributions.GPD()}
+    rain_dists = {0 : distributions.SSWeibull(),
+                  0.994 : distributions.SSGPD()}
     rng = random.PRNGKey(42)
 
     sp = SPG(rd, rain_dists, rng)
@@ -49,7 +49,7 @@ def make_nc(data, output_path):
     da.name = 'precipitation'
     da.attrs['units'] = 'mm/day'
     da = da.rename({'index' : 'time'})
-    
+
     ds = xr.Dataset()
     ds['precipitation'] = da
     ds.attrs = get_attributes()

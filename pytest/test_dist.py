@@ -5,6 +5,11 @@ from jax.scipy.optimize import minimize
 from jax import grad
 import jax.numpy as jnp
 
+from tensorflow_probability.substrates import jax as tfp
+tfd = tfp.distributions
+# import tensorflow_probability as tfp; tfp = tfp.substrates.jax
+# tfd = tfp.distributions
+
 
 from sklearn.datasets import load_breast_cancer
 from sklearn.preprocessing import StandardScaler
@@ -88,5 +93,19 @@ def test_dry_day_ar():
     print(dist.ppf(0.7, x=jnp.array([[0, 1]])))
     print(dist.ppf(0.7, x=jnp.array([[0, 0]])))
 
+def test_tf_gpd():
+    loc, scale, shape = (.3, 1.1, 2.1)
+    dist = tfd.GeneralizedPareto(scale=scale, loc=loc, concentration=shape)
+    assert np.isclose(dist.cdf(0.5), ss.genpareto.cdf(0.5, shape, loc=loc, scale=scale))
+
+def test_tf_weibull():
+    scale, shape = (1.1, 2.1)
+    dist = tfd.Weibull(scale=scale, concentration=shape)
+    
+    val = dist.cdf(0.5)    
+    target = ss.weibull_min.cdf(0.5, shape, loc=0, scale=scale)
+
+    assert np.isclose(val, target)
+
 if __name__ == '__main__':
-    test_dry_day_ar()
+    test_tf_weibull()

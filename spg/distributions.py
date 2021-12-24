@@ -11,6 +11,9 @@ from jax import random
 import matplotlib.pyplot as plt
 from jax.scipy.optimize import minimize
 
+import tensorflow_probability as tfp; tfp = tfp.substrates.jax
+tfd = tfp.distributions
+
 
 def lin_regress(x, y):
     return jnp.linalg.inv(x.T @ x) @ (x.T @ y)
@@ -62,6 +65,31 @@ class Dist():
         for func in self.transforms:
             params = func(params)
         return params
+
+class TFPDist(Dist):
+    def __init__(self, dist, param_init=None):
+        self.dist = dist
+        
+        init_key, sample_key = random.split(random.PRNGKey(0))
+        init_params = tuple(dist.sample(seed=init_key)[:-1])
+        
+        if param_init is None:
+            param_init = 5    
+        
+        self.params = param_init
+
+    def fit(self, data, fit_func=fit):
+        y = prob_bin(data[self.ar_depth:], self.thresh
+        
+        def loss_func(*params):
+            return dist.log_prob(params + (data,))
+        
+        res = fit_func(loss_func, self.params)
+        self.params = res.x
+        assert res.success
+
+    def ppf(self, p, cond=None):
+        self.dist.ppf(p)
 
 
 class SSDist(Dist):
@@ -133,5 +161,5 @@ class RainDay(Dist):
         self.did_fit = res.success
         
 
-Weibull = partial(SSDist, ss.weibull_min)
-GPD = partial(SSDist, ss.genpareto)
+SSWeibull = partial(SSDist, ss.weibull_min)
+SSGPD = partial(SSDist, ss.genpareto)
