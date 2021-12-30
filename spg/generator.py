@@ -7,8 +7,12 @@ import jax.numpy as jnp
 
 def cycle(arr, val):
     """ Removes the first value from arr and adds a new value to the end """
-    arr = arr.at[:-1].set(arr[1:])
-    return arr.at[-1].set(val)
+    if arr.ndim != val.ndim:
+        val = jnp.atleast_2d(val)
+        assert val.ndim == val.ndim
+        
+    arr = arr.at[..., :-1].set(arr[..., 1:])
+    return arr.at[..., -1:].set(val)
 
 
 class SPG():

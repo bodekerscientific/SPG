@@ -1,3 +1,6 @@
+import jax
+from jax._src.api import named_call
+from jax.scipy.optimize import minimize
 import scipy.stats as ss
 from functools import partial
 import numpy as np
@@ -6,13 +9,17 @@ import jax.numpy as jnp
 from jax import nn
 from jax import grad
 from jax import random
-
+from jax.experimental.host_callback import id_print
 
 import matplotlib.pyplot as plt
-from jax.scipy.optimize import minimize
 
-import tensorflow_probability as tfp; tfp = tfp.substrates.jax
+import tensorflow_probability as tfp
+tfp = tfp.substrates.jax
 tfd = tfp.distributions
+
+
+# Important for convergence
+jax.config.update("jax_enable_x64", True)
 
 
 def lin_regress(x, y):
@@ -22,11 +29,12 @@ def lin_regress(x, y):
 def logistic_regress(x, w):
     return nn.sigmoid(x @ w)
 
+
 def prob_bin(probs, thresh=0.5):
     """ Calculates binary predictions """
     pred_bin = jnp.array(probs)
-    pred_bin = jnp.where(pred_bin < thresh, pred_bin, 1.0)
-    pred_bin = jnp.where(pred_bin >= thresh, pred_bin, 0.0)
+    pred_bin = jnp.where(pred_bin > thresh, pred_bin, 0.0)
+    pred_bin = jnp.where(pred_bin <= thresh, pred_bin, 1.0)
     return pred_bin
 
 
@@ -36,7 +44,7 @@ def logistic_loss(w, x, y, eps=1e-14, weight_decay=0.1):
     #n = y.size
     p = logistic_regress(x, w)
     p = jnp.clip(p, eps, 1 - eps)  # bound the probabilities
-    return -jnp.mean(y * jnp.log(p) + (1 - y) * jnp.log(1 - p))+ 0.5 * weight_decay * w@w
+    return -jnp.mean(y * jnp.log(p) + (1 - y) * jnp.log(1 - p)) + 0.5 * weight_decay * w@w
 
 
 def nll_loss(preds, targets, eps=1e-14):
@@ -45,12 +53,27 @@ def nll_loss(preds, targets, eps=1e-14):
     return -jnp.sum(y * jnp.log(p) + (1 - y) * jnp.log(1 - p))
 
 
-def fit(func, params_init, options={"gtol": 1e-5}):
+def fit(func, params_init, options={"gtol": 1e-7}):
     return minimize(func, params_init, method="BFGS", options=options)
-    
+
+
+def fill_first(params, n=1, val=0):
+    """ Adds a zero to params, so we can force the loc=0 """
+    return jnp.concatenate([jnp.full(n, val), params], axis=None)
+
+
+def fill_last(params, n=1, val=0):
+    """ Adds a zero to params, so we can force the loc=0 """
+    return jnp.concatenate([params, jnp.full(n, val)], axis=None)
+
+
 class Dist():
-    def __init__(self, transforms=[]):
-        self.transforms = transforms
+    def __init__(self, name, params):
+        self.name = name
+        self.params = params
+        if self.params is not None:
+            print(f'Created distribution, {self.name} with {len(self.params)} elements')
+        
 
     def cdf(self, x, cond=None):
         raise NotImplementedError('Need to make a subclass')
@@ -66,37 +89,78 @@ class Dist():
             params = func(params)
         return params
 
-class TFPDist(Dist):
-    def __init__(self, dist, param_init=None):
-        self.dist = dist
-        
-        init_key, sample_key = random.split(random.PRNGKey(0))
-        init_params = tuple(dist.sample(seed=init_key)[:-1])
-        
-        if param_init is None:
-            param_init = 5    
-        
-        self.params = param_init
+    def __repr__(self, ):
+        param_str = ', '.join([str(p) for p in self.params])
+        return f'{self.name}, params: {param_str}'
 
-    def fit(self, data, fit_func=fit):
-        y = prob_bin(data[self.ar_depth:], self.thresh
-        
-        def loss_func(*params):
-            return dist.log_prob(params + (data,))
-        
+
+class TFPDist(Dist):
+    def __init__(self, dist, name, num_params=2, param_func=None, param_init=None):
+        if param_init is None:
+            param_init = [1.0]*num_params
+
+        self.dist = dist
+        self.param_func = param_func
+        self._scale_data = 1.0
+        super().__init__(name, jnp.array(param_init))
+
+    def fit(self, data, fit_func=fit, eps=1e-7):
+        self._scale_data = data.std()
+        data /= self._scale_data
+
+        def loss_func(params):
+            if self.param_func:
+                params = self.param_func(params)
+            res = (-self.dist(*params).log_prob(data+eps)).mean()
+            return res
+
         res = fit_func(loss_func, self.params)
         self.params = res.x
-        assert res.success
 
-    def ppf(self, p, cond=None):
-        self.dist.ppf(p)
+        #assert res.success
+
+
+class TFWeibull(TFPDist):
+    def __init__(self, param_init=None):
+        if param_init is None:
+            param_init = [0.5, 1.0]
+
+        super().__init__(tfd.Weibull, 'TFWeibull', num_params=2, param_init=param_init)
+        self.ss_dist = ss.weibull_min
+
+    def ppf(self, x, cond=None):
+        params = self.params
+        if self.param_func:
+            params = self.param_func(params)
+
+        shape, scale = self.params
+        return self.ss_dist.ppf(x, shape, scale=scale, loc=0)*self._scale_data
+
+
+class TFGeneralizedPareto(TFPDist):
+    def __init__(self, param_init=None):
+        if param_init is None:
+            param_init = [1.0, 0.1]
+
+        super().__init__(tfd.GeneralizedPareto, 'TFGenpareto', num_params=2,
+                         param_init=param_init, param_func=fill_first)
+        self.ss_dist = ss.genpareto
+
+    def ppf(self, x, cond=None):
+        params = self.params
+        if self.param_func:
+            params = self.param_func(params)
+
+        loc, scale, shape = params
+        return self.ss_dist.ppf(x, shape, scale=scale, loc=loc)*self._scale_data
 
 
 class SSDist(Dist):
-    def __init__(self, ss_dist, transforms=[]):
+    def __init__(self, ss_dist, name, transforms=[]):
         super().__init__(transforms)
         self.dist = ss_dist
-        self.params = None
+        params = None
+        super().__init__(name, params)
 
     def cdf(self, x):
         assert self.params is not None
@@ -104,24 +168,23 @@ class SSDist(Dist):
 
     def ppf(self, p, cond=None):
         assert self.params is not None
-        assert p >=0 and p <= 1.0
+        assert p >= 0 and p <= 1.0
 
         return self.dist.ppf(p, *self.params)
 
     def fit(self, data):
         self.params = self.dist.fit(data, floc=0.0)
-    
+
+
 class RainDay(Dist):
     def __init__(self, thresh=0.1, ar_depth=1, rnd_key=random.PRNGKey(42)):
         """ Calculates wether or not it is a rain day based on the last n dry/wet days """
-        super().__init__(self)
         self.thresh = thresh
         self.ar_depth = ar_depth
 
-        self.params = random.normal(rnd_key, shape=(ar_depth+1, ))
+        params = random.normal(rnd_key, shape=(ar_depth+1, ))
         self.did_fit = False
-
-        print(f'Created model with {len(self.params)} elements')
+        super().__init__('RainDay', params)
 
     def _process_x(self, x, dim):
         concat = []
@@ -129,26 +192,29 @@ class RainDay(Dist):
             x = jnp.array(x)
             concat.append(x)
 
-        # Add the bias        
+        # Add the bias
         concat.append(jnp.ones((dim, 1)))
 
         return jnp.concatenate(concat, axis=1).astype(float)
 
+    def get_thresh(self, x=None):
+        x = self._process_x(x, dim=len(x))
+        return logistic_regress(x, self.params)
+
     def ppf(self, p, x=None):
         assert x is None or self.ar_depth > 0
 
-        #assert len(x) == self.ar_depth
         p = jnp.atleast_1d(p)
-        x = self._process_x(x, dim=len(p))
+        thresh = self.get_thresh(x)
 
-        return prob_bin(p, thresh=logistic_regress(x, self.params))#.astype(bool)
+        return p < thresh
 
     def fit(self, data, fit_func=fit):
         cols = []
         # TODO: This assumes that there are no gaps in the time series
         for n in range(self.ar_depth):
             cols.append(data[n: -(self.ar_depth-n)] > self.thresh)
-        
+
         y = prob_bin(data[self.ar_depth:], self.thresh)
         x = self._process_x(jnp.stack(cols, axis=1), dim=len(y))
 
@@ -159,7 +225,7 @@ class RainDay(Dist):
         #res = fit_func(train_func, params_init=self.params)
         self.params = res.x
         self.did_fit = res.success
-        
 
-SSWeibull = partial(SSDist, ss.weibull_min)
-SSGPD = partial(SSDist, ss.genpareto)
+
+SSWeibull = partial(SSDist, ss.weibull_min, 'SSWeibull')
+SSGeneralizedPareto = partial(SSDist, ss.genpareto, 'SSGenpareto')

@@ -1,15 +1,21 @@
-from spg import distributions
 import scipy.stats as ss
 import numpy as np
 from jax.scipy.optimize import minimize
 from jax import grad
 import jax.numpy as jnp
+import jax
+from functools import cache
+
+jax.config.update("jax_enable_x64", True)
 
 from tensorflow_probability.substrates import jax as tfp
 tfd = tfp.distributions
 # import tensorflow_probability as tfp; tfp = tfp.substrates.jax
 # tfd = tfp.distributions
 
+from spg import distributions
+from spg import run
+from spg.generator import cycle
 
 from sklearn.datasets import load_breast_cancer
 from sklearn.preprocessing import StandardScaler
@@ -43,9 +49,14 @@ def get_sklearn_test_data():
             'y_train': y_train,
             'y_test': y_test,
             'n_feat' : n_feat}
-
+            
+@cache
+def get_real_data():
+    fpath = "/mnt/temp/projects/emergence/data_keep/station_data/dunedin_btl_gardens_precip.tsv"
+    return run.load_data(fpath)
 
 def get_data_rnd(n=1000):
+    np.random.seed(42)
     a = np.random.normal(scale=1.0, size=n+1)**4
     return (a[1:] + a[:-1])**0.1
 
@@ -75,14 +86,6 @@ def test_dry_logistic_cost():
     assert accuracy_score(dataset['y_test'], y_pred) > 0.94
 
 
-def test_dry_day():
-    dist = distributions.RainDay(thresh=0.5, ar_depth=0)
-    data = get_data()
-    dist.fit(data)
-    assert np.isclose(dist.params[0], 0, atol=1e-4)
-    assert dist.ppf(0.7) == 1.0
-    assert dist.ppf(0.499) == 0
-
 def test_dry_day_ar():
     dist = distributions.RainDay(thresh=1.0, ar_depth=2)
     data = jnp.array(get_data_rnd())
@@ -92,6 +95,33 @@ def test_dry_day_ar():
     print(dist.ppf(0.6, x=jnp.array([[1, 1]])))
     print(dist.ppf(0.7, x=jnp.array([[0, 1]])))
     print(dist.ppf(0.7, x=jnp.array([[0, 0]])))
+
+
+def test_dry_day_ar_order(data = get_real_data()):
+    dist = distributions.RainDay(thresh=0.1, ar_depth=2)
+    data = jnp.array(data)
+    dist.fit(data)
+    assert len(dist.params) == 3
+    
+    print(dist.params)
+    a = dist.get_thresh(x=jnp.array([[1, 1]]))
+    b = dist.get_thresh(x=jnp.array([[0, 0]]))
+    print(a, b)
+    assert a > b
+
+    rain_days = []
+    np.random.seed(42)
+    rnd_vec = np.random.uniform(0, 1.0, size=1000)
+    last = jnp.array([[1.0, 1.0]])
+    
+    for rnd in rnd_vec:
+        a = dist.ppf(rnd, x=last)
+        last = cycle(last, a.astype(float))
+        rain_days.append(a[0])
+
+    rain_days = np.array(rain_days).astype(float)
+
+    assert np.isclose(rain_days.mean(), float((data >= .1).sum()/data.size), rtol=1e-2, atol=1e-2) 
 
 def test_tf_gpd():
     loc, scale, shape = (.3, 1.1, 2.1)
@@ -107,5 +137,45 @@ def test_tf_weibull():
 
     assert np.isclose(val, target)
 
+def test_tf_weibull_fit(data = get_data_rnd()):    
+    data = data[data>.1] - .1
+    data /= data.std()
+    tf_dist = distributions.TFWeibull()
+    ss_dist =  ss.weibull_min
+
+    coefs_ss = list(ss_dist.fit(data, floc=0))
+    print((-np.log(ss_dist.pdf(data, *coefs_ss))).mean())
+    print(coefs_ss)
+    # Delete location param
+    del coefs_ss[1]
+    
+    tf_dist.fit(data)
+    assert(np.isclose(tf_dist.params, coefs_ss, atol=1e-4, rtol=1e-3).all())
+
+    assert np.isclose(tf_dist.ppf(.9), ss_dist.ppf(0.9, c=coefs_ss[0], scale=coefs_ss[1]))
+
+def test_tf_gpd_fit(data=get_data_rnd(100_000)):
+    thresh = np.quantile(data, 0.99)
+    data = data[data > thresh] - thresh
+    data /= data.std()
+
+    tf_dist = distributions.TFGeneralizedPareto()
+    ss_dist =  ss.genpareto
+
+    coefs_ss = list(ss_dist.fit(data, floc=0))
+    shape, loc, scale = coefs_ss
+    coefs_ss = [coefs_ss[-1], coefs_ss[0]]
+
+    tf_dist.fit(data)
+    print(f'ss : {coefs_ss} , tf : {tf_dist.params}')
+    assert(np.isclose(tf_dist.params, coefs_ss, atol=1e-4, rtol=1e-3).all())
+
+    assert np.isclose(tf_dist.ppf(.9), ss_dist.ppf(0.9, shape, loc=loc, scale=scale), atol=1e-5, rtol=1e-4)
+
+def test_real_data():
+    data = get_real_data()
+    test_tf_gpd_fit(data)
+    test_tf_weibull_fit(data)
+
 if __name__ == '__main__':
-    test_tf_weibull()
+    test_tf_weibull_fit()
