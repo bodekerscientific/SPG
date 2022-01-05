@@ -101,12 +101,12 @@ class TFPDist(Dist):
 
         self.dist = dist
         self.param_func = param_func
-        self._scale_data = 1.0
+        self._scale = None
         super().__init__(name, jnp.array(param_init))
 
     def fit(self, data, fit_func=fit, eps=1e-7):
-        self._scale_data = data.std()
-        data /= self._scale_data
+        # self._scale = data.std()
+        # data = data/self._scale
 
         def loss_func(params):
             if self.param_func:
@@ -123,7 +123,7 @@ class TFPDist(Dist):
 class TFWeibull(TFPDist):
     def __init__(self, param_init=None):
         if param_init is None:
-            param_init = [0.5, 1.0]
+            param_init = [0.75, 1.0]
 
         super().__init__(tfd.Weibull, 'TFWeibull', num_params=2, param_init=param_init)
         self.ss_dist = ss.weibull_min
@@ -134,7 +134,11 @@ class TFWeibull(TFPDist):
             params = self.param_func(params)
 
         shape, scale = self.params
-        return self.ss_dist.ppf(x, shape, scale=scale, loc=0)*self._scale_data
+        return self.ss_dist.ppf(x, shape, loc=0, scale=scale)#*self._scale
+
+    def fit(self, data):
+        self.params = self.params.at[-1].set(data.std())
+        super().fit(data)
 
 
 class TFGeneralizedPareto(TFPDist):
@@ -147,34 +151,36 @@ class TFGeneralizedPareto(TFPDist):
         self.ss_dist = ss.genpareto
 
     def ppf(self, x, cond=None):
+        
         params = self.params
         if self.param_func:
             params = self.param_func(params)
 
         loc, scale, shape = params
-        return self.ss_dist.ppf(x, shape, scale=scale, loc=loc)*self._scale_data
+        return self.ss_dist.ppf(x, shape, scale=scale, loc=loc)#*self._scale
 
 
 class SSDist(Dist):
-    def __init__(self, ss_dist, name, transforms=[]):
-        super().__init__(transforms)
+    def __init__(self, ss_dist, name):
         self.dist = ss_dist
         params = None
+        #self._scale = None
         super().__init__(name, params)
-
-    def cdf(self, x):
-        assert self.params is not None
-        x = self.eval_tr(x)
 
     def ppf(self, p, cond=None):
         assert self.params is not None
         assert p >= 0 and p <= 1.0
 
-        return self.dist.ppf(p, *self.params)
+        return self.dist.ppf(p, *self.params)#*self._scale
 
-    def fit(self, data):
-        self.params = self.dist.fit(data, floc=0.0)
+    def fit(self, data, eps=1e-12):
+        #self._scale = data.std()
+        # data = data/self._scale
+        self.params = self.dist.fit(data + eps, floc=0.0)
 
+
+SSWeibull = partial(SSDist, ss.weibull_min, 'SSWeibull')
+SSGeneralizedPareto = partial(SSDist, ss.genpareto, 'SSGenpareto')
 
 class RainDay(Dist):
     def __init__(self, thresh=0.1, ar_depth=1, rnd_key=random.PRNGKey(42)):
@@ -225,7 +231,3 @@ class RainDay(Dist):
         #res = fit_func(train_func, params_init=self.params)
         self.params = res.x
         self.did_fit = res.success
-
-
-SSWeibull = partial(SSDist, ss.weibull_min, 'SSWeibull')
-SSGeneralizedPareto = partial(SSDist, ss.genpareto, 'SSGenpareto')

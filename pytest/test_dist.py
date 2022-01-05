@@ -138,18 +138,22 @@ def test_tf_weibull():
     assert np.isclose(val, target)
 
 def test_tf_weibull_fit(data = get_data_rnd()):    
-    data = data[data>.1] - .1
-    data /= data.std()
+    data = data[data>=.1] - .1
+    #data[data > 50] = 0.0
+    #data /= data.std()
     tf_dist = distributions.TFWeibull()
     ss_dist =  ss.weibull_min
 
     coefs_ss = list(ss_dist.fit(data, floc=0))
+    tf_dist.fit(data)
+    print(len(data))
+
     print((-np.log(ss_dist.pdf(data, *coefs_ss))).mean())
     print(coefs_ss)
+    print(tf_dist.params)
     # Delete location param
     del coefs_ss[1]
     
-    tf_dist.fit(data)
     assert(np.isclose(tf_dist.params, coefs_ss, atol=1e-4, rtol=1e-3).all())
 
     assert np.isclose(tf_dist.ppf(.9), ss_dist.ppf(0.9, c=coefs_ss[0], scale=coefs_ss[1]))
@@ -174,8 +178,8 @@ def test_tf_gpd_fit(data=get_data_rnd(100_000)):
 
 def test_real_data():
     data = get_real_data()
-    test_tf_gpd_fit(data)
+    #test_tf_gpd_fit(data)
     test_tf_weibull_fit(data)
 
 if __name__ == '__main__':
-    test_tf_weibull_fit()
+    test_real_data()

@@ -7,6 +7,7 @@ import jax.numpy as jnp
 
 def cycle(arr, val):
     """ Removes the first value from arr and adds a new value to the end """
+    val = jnp.atleast_1d(val)
     if arr.ndim != val.ndim:
         val = jnp.atleast_2d(val)
         assert val.ndim == val.ndim
@@ -37,9 +38,8 @@ class SPG():
 
     def sample(self, cond):
         self.rnd_key, subkey = random.split(self.rnd_key)
-
         prob_rain, prob_sel, prob_dist = random.uniform(subkey, (3,))
-        
+    
         is_rain = self.rainday.ppf(prob_rain, cond['rainday'])
         if is_rain:
             dist = self._select_dist(prob_sel)
@@ -71,15 +71,19 @@ class SPG():
         # Ensure we don't miss any data
         thresh = self.thresholds.copy()
         thresh[0] -= 1
-        thresh[-1] += 1 
+        thresh[-1] = np.inf
 
         for lower, upper, key in zip(self.thresholds[:-1], self.thresholds[1:], self.dist_thresh):
-            
-            data_sub = data[(data>=lower) & (data<upper)]
+            data_sub = data[(data>=lower)]
             print(f'Fitting dist, q={key}, from {lower} to {upper} with {len(data_sub)} datapoints')
             self.dists[key].fit(data_sub - lower)
             self.dists[key].offset = lower
             
+    def print_params(self, ):
+        print(self.rainday)
+        for d in self.dists.values():
+            print(d)
+        
 
 
 
