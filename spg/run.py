@@ -6,16 +6,8 @@ import pandas as pd
 import jax.numpy as jnp
 from jax import random
 import matplotlib.pyplot as plt
-import xarray as xr
-from bslibs.ncutils import get_attributes
+from data_utils import load_data, load_magic, make_nc
 from pathlib import Path
-
-
-def load_data(fpath="/mnt/temp/projects/emergence/data_keep/station_data/dunedin_btl_gardens_precip.tsv"):
-    df = pd.read_csv(fpath, sep='\t', parse_dates=['Date(UTC)'], skiprows=8)
-
-    df['date'] = pd.to_datetime(df['Date(UTC)'].values, format='%Y%m%d:%H%M')
-    return pd.Series(df['Amount(mm)'].values, index=df['date'].values)
 
 
 def fit_spg(data, use_tf=False, ar_depth=2, thresh=0.1):
@@ -61,19 +53,6 @@ def gen_preds(sp: SPG, data: pd.Series, num_steps=None, plot_folder=Path('./')):
 
     return predictions
 
-
-def make_nc(data, output_path):
-    da = xr.DataArray.from_series(data)
-    da.name = 'precipitation'
-    da.attrs['units'] = 'mm/day'
-    da = da.rename({'index': 'time'})
-
-    ds = xr.Dataset()
-    ds['precipitation'] = da
-    ds.attrs = get_attributes()
-
-    print(f'Saving to {output_path}')
-    ds.to_netcdf(output_path)
 
 
 if __name__ == '__main__':

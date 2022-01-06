@@ -91,8 +91,8 @@ class TFPDist(Dist):
         def loss_func(params):
             params = self.param_post(self.param_func(params, cond))
             res = (-self.dist(*params).log_prob(data+eps)).mean()
-            id_print(res)
-            id_print(params)
+            #id_print(res)
+            #id_print(params)
             return res
 
         res = fit_func(loss_func, self._params)
@@ -138,7 +138,7 @@ class TFGeneralizedPareto(TFPDist):
         def post_process(params):
             # Add back location first
             params = fill_first(params)
-            id_print(params)
+
             # Ensure the scale param is always positive
             return jax_utils.apply_pos(params, idx=1)
 
