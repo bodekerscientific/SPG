@@ -17,12 +17,14 @@ def cycle(arr, val):
 
 
 class SPG():
-    def __init__(self, rainday: Dist, rain_dists: dict, random_key: random.PRNGKey):
+    def __init__(self, rainday: Dist, rain_dists: dict, random_key: random.PRNGKey, max_val=500):
         self.rainday = rainday
         self.dists = rain_dists
         self.rnd_key = random_key
         self.thresholds = None
         self.offset_dist = {}
+        self.max_val = max_val
+
 
         self.dist_thresh = np.array(sorted(rain_dists.keys()))
         assert self.dist_thresh.min() == 0 and self.dist_thresh.max() < 1.0
@@ -43,7 +45,10 @@ class SPG():
         is_rain = self.rainday.ppf(prob_rain, cond['rainday'])
         if is_rain:
             dist = self._select_dist(prob_sel)
-            rain = dist.ppf(prob_dist, cond['rain']) + dist.offset + self.rainday.thresh
+            # Calculate the value using the inverse of the cdf (ppf), we scale the prob by the max value allowed
+            # For the distribution.
+            rain = dist.ppf(prob_dist*dist.max_prob, cond['rain']) + dist.offset + self.rainday.thresh
+            rain *= self._scale
         else:
             rain = 0.0
 
@@ -65,19 +70,28 @@ class SPG():
     def fit(self, data):
         self.rainday.fit(data)
         
-        data = data[data >= self.rainday.thresh] - self.rainday.thresh
+        data = data[data >= self.rainday.thresh]
+        self._scale = data.std()
+        
+        data = data/self._scale - self.rainday.thresh
         self.thresholds = np.quantile(data, list(self.dist_thresh) + [1.0])
         
         # Ensure we don't miss any data
         thresh = self.thresholds.copy()
-        thresh[0] -= 1
-        thresh[-1] = np.inf
+        thresh[-1] = self.max_val
 
         for lower, upper, key in zip(self.thresholds[:-1], self.thresholds[1:], self.dist_thresh):
-            data_sub = data[(data>=lower)]
-            print(f'Fitting dist, q={key}, from {lower} to {upper} with {len(data_sub)} datapoints')
+            data_sub = data[(data>=lower) & (data<upper)]
+            print(f'Fitting dist, q={key}, from {lower*self._scale} to {upper*self._scale} with {len(data_sub)} datapoints')
+            
             self.dists[key].fit(data_sub - lower)
+            # We need to remember the offset, to shift the data back
             self.dists[key].offset = lower
+
+            # We save the max_prob, so we can generate values greater then the max val.
+            if np.isfinite(upper):
+                max_prob = self.dists[key].cdf(upper)
+                self.dists[key].max_prob = max_prob
             
     def print_params(self, ):
         print(self.rainday)

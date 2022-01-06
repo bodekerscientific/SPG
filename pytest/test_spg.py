@@ -11,7 +11,6 @@ import scipy.stats as ss
 
 _SEED = 42
 
-
 def _get_rnd_key():
     return random.PRNGKey(_SEED)
 
@@ -39,23 +38,22 @@ def test_select_dist():
 
 def _get_preds(sp, num_steps=1000):
     ar_depth = sp.rainday.ar_depth
-    cond = jnp.ones(ar_depth)
+    cond = jnp.zeros(ar_depth)
     cond = {'rain': None, 'rainday': jnp.ones([1, ar_depth])}
     #time = pd.date_range(start=data.index[0], end='2050-1-1')
     return sp.generate(num_steps=num_steps, cond_init=cond)
 
 def test_simple_spg(data = load_data()):
     #data[data > 50] = 0
-
     thresh = 0.2
-    rd = distributions.RainDay(thresh=thresh, ar_depth=1)
+    rd = distributions.RainDay(thresh=thresh, ar_depth=2)
 
     rng = random.PRNGKey(42)
-    sp_tf = SPG(rd, {0: distributions.TFWeibull()}, rng)
+    sp_tf = SPG(rd, {0: distributions.TFWeibull(), 0.99: distributions.TFGeneralizedPareto()}, rng)
     sp_tf.fit(data.values)
 
     rng = random.PRNGKey(42)
-    sp_ss = SPG(rd, {0: distributions.SSWeibull()}, rng)
+    sp_ss = SPG(rd, {0: distributions.SSWeibull(), 0.99: distributions.SSGeneralizedPareto()}, rng)
     sp_ss.fit(data.values)
 
     sp_ss.print_params()
@@ -77,7 +75,9 @@ def test_simple_spg(data = load_data()):
     
     plt.figure(figsize=(20,14))
     plt.scatter(preds_tf, preds_ss)
+    plt.grid()
     plt.savefig('scatter.png', dpi=300)
+    plt.close()
 
     plot_qq(data, preds_ss, Path('./qq_ss.png'))
     plot_qq(data, preds_tf, Path('./qq_tf.png'))

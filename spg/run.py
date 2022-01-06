@@ -18,7 +18,7 @@ def load_data(fpath="/mnt/temp/projects/emergence/data_keep/station_data/dunedin
     return pd.Series(df['Amount(mm)'].values, index=df['date'].values)
 
 
-def fit_spg(data, use_tf=False, ar_depth=2, thresh=0.2):
+def fit_spg(data, use_tf=False, ar_depth=2, thresh=0.1):
     rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
 
     if use_tf:

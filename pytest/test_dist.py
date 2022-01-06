@@ -173,7 +173,6 @@ def test_tf_gpd_fit(data=get_data_rnd(100_000)):
     tf_dist.fit(data)
     print(f'ss : {coefs_ss} , tf : {tf_dist.params}')
     assert(np.isclose(tf_dist.params, coefs_ss, atol=1e-4, rtol=1e-3).all())
-
     assert np.isclose(tf_dist.ppf(.9), ss_dist.ppf(0.9, shape, loc=loc, scale=scale), atol=1e-5, rtol=1e-4)
 
 def test_real_data():

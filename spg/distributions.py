@@ -71,6 +71,8 @@ class Dist():
     def __init__(self, name, params):
         self.name = name
         self.params = params
+        self.offset = None
+        self.max_prob = None
         if self.params is not None:
             print(f'Created distribution, {self.name} with {len(self.params)} elements')
         
@@ -91,7 +93,7 @@ class Dist():
 
     def __repr__(self, ):
         param_str = ', '.join([str(p) for p in self.params])
-        return f'{self.name}, params: {param_str}'
+        return f'{self.name}, offset: {self.offset}, max_prob: {self.max_prob}, params: {param_str}'
 
 
 class TFPDist(Dist):
@@ -117,9 +119,17 @@ class TFPDist(Dist):
         res = fit_func(loss_func, self.params)
         self.params = res.x
 
-        #assert res.success
+    def get_ss_params(self,):
+        raise NotImplementedError('Need to override this method')
 
+    def ppf(self, x, cond=None):
+        shape, loc, scale = self.get_ss_params()
+        return self.ss_dist.ppf(x, shape, loc=loc, scale=scale)#*self._scale
 
+    def cdf(self, x, cond=None):
+        shape, loc, scale = self.get_ss_params()
+        return self.ss_dist.cdf(x, shape, loc=loc, scale=scale)#*self._scale
+       
 class TFWeibull(TFPDist):
     def __init__(self, param_init=None):
         if param_init is None:
@@ -128,13 +138,11 @@ class TFWeibull(TFPDist):
         super().__init__(tfd.Weibull, 'TFWeibull', num_params=2, param_init=param_init)
         self.ss_dist = ss.weibull_min
 
-    def ppf(self, x, cond=None):
+    def get_ss_params(self,):
         params = self.params
         if self.param_func:
             params = self.param_func(params)
-
-        shape, scale = self.params
-        return self.ss_dist.ppf(x, shape, loc=0, scale=scale)#*self._scale
+        return params[0], 0.0, params[1]
 
     def fit(self, data):
         self.params = self.params.at[-1].set(data.std())
@@ -150,14 +158,11 @@ class TFGeneralizedPareto(TFPDist):
                          param_init=param_init, param_func=fill_first)
         self.ss_dist = ss.genpareto
 
-    def ppf(self, x, cond=None):
-        
+    def get_ss_params(self,):
         params = self.params
         if self.param_func:
             params = self.param_func(params)
-
-        loc, scale, shape = params
-        return self.ss_dist.ppf(x, shape, scale=scale, loc=loc)#*self._scale
+        return params[2], params[0], params[1]
 
 
 class SSDist(Dist):
@@ -166,6 +171,10 @@ class SSDist(Dist):
         params = None
         #self._scale = None
         super().__init__(name, params)
+    
+    def cdf(self, x, cond=None):
+        assert self.params is not None
+        return self.dist.cdf(x, *self.params)
 
     def ppf(self, p, cond=None):
         assert self.params is not None
