@@ -45,14 +45,24 @@ def fill_last(params, n=1, val=0):
 
 class Dist():
     """ Abstract distribution class which all the distributions must subclass """
-    def __init__(self, name, params):
+    def __init__(self, name, params, param_post=None, param_func=None,):
         self.name = name
-        self.params = params
+        self._params = params
+
+        self.param_func = param_func
+        self.param_post = param_post
+        if self.param_func is None:
+            self.param_func = lambda x, cond : x
+        if self.param_post is None:
+            self.param_post = lambda x : x
+        
         self.offset = None
         self.max_prob = None
-        if self.params is not None:
-            print(f'Created distribution, {self.name} with {len(self.params)} elements')
+        if self._params is not None:
+            print(f'Created distribution, {self.name} with {len(self._params)} elements')
         
+    def get_params(self, cond=None):
+        return self.param_post(self.param_func(self._params, cond))
 
     def cdf(self, x, cond=None):
         raise NotImplementedError('Need to make a subclass')
@@ -63,43 +73,30 @@ class Dist():
     def fit(self, data):
         raise NotImplementedError('Need to make a subclass')
         
-
-    def eval_tr(self, params):
-        for func in self.transforms:
-            params = func(params)
-        return params
-
     def __repr__(self, ):
-        param_str = ', '.join([str(p) for p in self.params])
+        param_str = ', '.join([str(p) for p in self._params])
         return f'{self.name}, offset: {self.offset}, max_prob: {self.max_prob}, params: {param_str}'
 
 
 class TFPDist(Dist):
-    def __init__(self, dist, name, num_params=2, param_post=None, param_func=None, param_init=None):
+    def __init__(self, dist, ss_dist, name, num_params=2, param_init=None, **kwargs):
         if param_init is None:
             param_init = [1.0]*num_params
 
         self.dist = dist
-        self.param_func = param_func
-        self.param_post = param_post
+        self.ss_dist = ss_dist
+        super().__init__(name, jnp.array(param_init), **kwargs)
 
-        if self.param_func is None:
-            self.param_func = lambda x, cond : x
-        if self.param_post is None:
-            self.param_post = lambda x : x
-
-        self._scale = None
-        super().__init__(name, jnp.array(param_init))
-
-    def fit(self, data, cond=None, fit_func=fit, eps=1e-7):
+    def fit(self, data, cond=None, fit_func=fit, eps=1e-12):
         def loss_func(params):
             params = self.param_post(self.param_func(params, cond))
             res = (-self.dist(*params).log_prob(data+eps)).mean()
-            #id_print(res)
+            id_print(res)
+            id_print(params)
             return res
 
-        res = fit_func(loss_func, self.params)
-        self.params = res.x
+        res = fit_func(loss_func, self._params)
+        self._params = res.x
 
     def get_ss_params(self, cond=None):
         raise NotImplementedError('Need to override this method')
@@ -120,36 +117,36 @@ class TFWeibull(TFPDist):
 
         # Ensure the scale param is always positive
         param_post = partial(jax_utils.apply_pos, idx=1)
-        super().__init__(tfd.Weibull, 'TFWeibull', num_params=2, 
+
+        super().__init__(tfd.Weibull, ss.weibull_min, 'TFWeibull', num_params=2, 
                          param_init=param_init, param_post=param_post, **kwargs)
-        self.ss_dist = ss.weibull_min
 
     def get_ss_params(self, cond=None):
-        params = self.param_post(self.param_func(self.params, cond))
+        params = self.get_params(cond)
         return params[0], 0.0, params[1]
 
     def fit(self, data, **kwargs):
-        self.params = self.params.at[1].set(data.std())
+        #self.params = self._params.at[1].set(data.std())
         super().fit(data, **kwargs)
 
 
 class TFGeneralizedPareto(TFPDist):
     def __init__(self, param_init=None, **kwargs):
         if param_init is None:
-            param_init = [1.0, 0.1]
+            param_init = [1.0, 0.2]
 
-        self.ss_dist = ss.genpareto
         def post_process(params):
             # Add back location first
             params = fill_first(params)
+            id_print(params)
             # Ensure the scale param is always positive
             return jax_utils.apply_pos(params, idx=1)
 
-        super().__init__(tfd.GeneralizedPareto, 'TFGenpareto', num_params=2,
+        super().__init__(tfd.GeneralizedPareto, ss.genpareto, 'TFGenpareto', num_params=2,
                          param_init=param_init, param_post=post_process, **kwargs)
 
     def get_ss_params(self, cond=None):
-        params = self.param_post(self.param_func(self.params, cond))
+        params = self.get_params(cond)
         return params[2], params[0], params[1]
 
 
@@ -157,23 +154,20 @@ class SSDist(Dist):
     def __init__(self, ss_dist, name):
         self.dist = ss_dist
         params = None
-        #self._scale = None
         super().__init__(name, params)
     
     def cdf(self, x, cond=None):
-        assert self.params is not None
-        return self.dist.cdf(x, *self.params)
+        assert self._params is not None
+        return self.dist.cdf(x, *self.get_params(cond))
 
     def ppf(self, p, cond=None):
-        assert self.params is not None
+        assert self._params is not None
         assert p >= 0 and p <= 1.0
 
-        return self.dist.ppf(p, *self.params)#*self._scale
+        return self.dist.ppf(p, *self.get_params(cond))
 
     def fit(self, data, eps=1e-12):
-        #self._scale = data.std()
-        # data = data/self._scale
-        self.params = self.dist.fit(data + eps, floc=0.0)
+        self._params = self.dist.fit(data + eps, floc=0.0)
 
 
 SSWeibull = partial(SSDist, ss.weibull_min, 'SSWeibull')
@@ -202,7 +196,7 @@ class RainDay(Dist):
 
     def get_thresh(self, x=None):
         x = self._process_x(x, dim=len(x))
-        return jax_utils.logistic_regress(x, self.params)
+        return jax_utils.logistic_regress(x, self._params)
 
     def ppf(self, p, x=None):
         assert x is None or self.ar_depth > 0
@@ -224,7 +218,7 @@ class RainDay(Dist):
         def train_func(params):
             return jax_utils.logistic_loss(params, x, y)
 
-        res = fit_func(train_func, self.params)
+        res = fit_func(train_func, self._params)
         #res = fit_func(train_func, params_init=self.params)
-        self.params = res.x
+        self._params = res.x
         self.did_fit = res.success

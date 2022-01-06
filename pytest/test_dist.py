@@ -64,7 +64,7 @@ def get_real_data():
 def get_data_rnd(n=1000):
     np.random.seed(42)
     a = np.random.normal(scale=1.0, size=n+1)**4
-    return (a[1:] + a[:-1])**0.1
+    return (a[1:] + a[:-1])
 
 def get_data_rnd_non_stationary(n=1000):
     a = get_data_rnd(n)
@@ -112,7 +112,7 @@ def test_dry_day_ar():
     dist = distributions.RainDay(thresh=1.0, ar_depth=2)
     data = jnp.array(get_data_rnd())
     dist.fit(data)
-    assert len(dist.params) == 3
+    assert len(dist.get_params()) == 3
     print(dist.params)
     print(dist.ppf(0.6, x=jnp.array([[1, 1]])))
     print(dist.ppf(0.7, x=jnp.array([[0, 1]])))
@@ -123,7 +123,7 @@ def test_dry_day_ar_order(data = get_real_data()):
     dist = distributions.RainDay(thresh=0.1, ar_depth=2)
     data = jnp.array(data)
     dist.fit(data)
-    assert len(dist.params) == 3
+    assert len(dist.get_params()) == 3
     
     print(dist.params)
     a = dist.get_thresh(x=jnp.array([[1, 1]]))
@@ -172,30 +172,28 @@ def test_tf_weibull_fit(data = get_data_rnd()):
 
     print((-np.log(ss_dist.pdf(data, *coefs_ss))).mean())
     print(coefs_ss)
-    print(tf_dist.params)
+    print(tf_dist.get_params())
+
     # Delete location param
     del coefs_ss[1]
-    
-    assert(np.isclose(tf_dist.params, coefs_ss, atol=1e-4, rtol=1e-3).all())
-
+    assert(np.isclose(tf_dist.get_params(), coefs_ss, atol=1e-4, rtol=1e-3).all())
     assert np.isclose(tf_dist.ppf(.9), ss_dist.ppf(0.9, c=coefs_ss[0], scale=coefs_ss[1]))
 
 def test_tf_gpd_fit(data=get_data_rnd(100_000)):
     thresh = np.quantile(data, 0.99)
-    data = data[data > thresh] - thresh
-    data /= data.std()
+    data = data[data >= thresh] - thresh
+    #data /= data.std()
 
     tf_dist = distributions.TFGeneralizedPareto()
     ss_dist =  ss.genpareto
 
     coefs_ss = list(ss_dist.fit(data, floc=0))
-    shape, loc, scale = coefs_ss
-    coefs_ss = [coefs_ss[-1], coefs_ss[0]]
+    coefs_ss = [coefs_ss[1], coefs_ss[-1], coefs_ss[0]]
 
     tf_dist.fit(data)
-    print(f'ss : {coefs_ss} , tf : {tf_dist.params}')
-    assert(np.isclose(tf_dist.params, coefs_ss, atol=1e-4, rtol=1e-3).all())
-    assert np.isclose(tf_dist.ppf(.9), ss_dist.ppf(0.9, shape, loc=loc, scale=scale), atol=1e-5, rtol=1e-4)
+    print(f'ss : {coefs_ss} , tf : {tf_dist.get_params()}')
+    assert(np.isclose(tf_dist.get_params(), coefs_ss, atol=1e-4, rtol=1e-3).all())
+    #assert np.isclose(tf_dist.ppf(.9), ss_dist.ppf(0.9, shape, loc=loc, scale=scale), atol=1e-5, rtol=1e-4)
 
 def test_real_data():
     data = get_real_data()
@@ -251,4 +249,4 @@ def test_tf_gpd_ns_fit(data=None, tprime=None):
     _make_ns_plot(data, tf_dist, 'non_stationary_gpd.png')
 
 if __name__ == '__main__':
-    test_tf_gpd_ns_fit()
+    test_real_data()
