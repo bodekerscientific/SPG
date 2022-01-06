@@ -92,12 +92,10 @@ class TFPDist(Dist):
         super().__init__(name, jnp.array(param_init))
 
     def fit(self, data, cond=None, fit_func=fit, eps=1e-7):
-        # self._scale = data.std()
-        # data = data/self._scale
-
         def loss_func(params):
             params = self.param_post(self.param_func(params, cond))
             res = (-self.dist(*params).log_prob(data+eps)).mean()
+            #id_print(res)
             return res
 
         res = fit_func(loss_func, self.params)
@@ -120,7 +118,10 @@ class TFWeibull(TFPDist):
         if param_init is None:
             param_init = [0.75, 1.0]
 
-        super().__init__(tfd.Weibull, 'TFWeibull', num_params=2, param_init=param_init, **kwargs)
+        # Ensure the scale param is always positive
+        param_post = partial(jax_utils.apply_pos, idx=1)
+        super().__init__(tfd.Weibull, 'TFWeibull', num_params=2, 
+                         param_init=param_init, param_post=param_post, **kwargs)
         self.ss_dist = ss.weibull_min
 
     def get_ss_params(self, cond=None):
@@ -137,13 +138,18 @@ class TFGeneralizedPareto(TFPDist):
         if param_init is None:
             param_init = [1.0, 0.1]
 
-        super().__init__(tfd.GeneralizedPareto, 'TFGenpareto', num_params=2,
-                         param_init=param_init, param_post=fill_first, **kwargs)
         self.ss_dist = ss.genpareto
+        def post_process(params):
+            # Add back location first
+            params = fill_first(params)
+            # Ensure the scale param is always positive
+            return jax_utils.apply_pos(params, idx=1)
+
+        super().__init__(tfd.GeneralizedPareto, 'TFGenpareto', num_params=2,
+                         param_init=param_init, param_post=post_process, **kwargs)
 
     def get_ss_params(self, cond=None):
         params = self.param_post(self.param_func(self.params, cond))
-
         return params[2], params[0], params[1]
 
 

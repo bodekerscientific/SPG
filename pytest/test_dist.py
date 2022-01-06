@@ -223,7 +223,7 @@ def test_tf_weibull_ns_fit(data=None, tprime=None):
     tprime = tprime[mask]
 
     tf_dist = distributions.TFWeibull(param_init=[0.75, 1.0, 0.01, 0.01],
-                                      param_func=distributions.linear_exp_split)
+                                      param_func=jax_utils.linear_exp_split)
     ss_dist = ss.weibull_min
 
     coefs_ss = list(ss_dist.fit(data, floc=0))
@@ -234,19 +234,21 @@ def test_tf_weibull_ns_fit(data=None, tprime=None):
 
 def test_tf_gpd_ns_fit(data=None, tprime=None):
     if data is None:
-        tprime, data = get_data_rnd_non_stationary()
-    
-    thresh = np.quantile(data, 0.95)
+        data = get_real_data()
+        tprime = np.linspace(0, 1.0, len(data))
+
+    thresh = np.quantile(data, 0.99)
     mask = data > thresh
     data = data[mask] - thresh
+    print(data)
     tprime = tprime[mask]
 
-    tf_dist = distributions.TFGeneralizedPareto(param_init=[1.0, 0.1, 0.01, 0.01],
-                                                param_func=distributions.linear_exp_split)
+    tf_dist = distributions.TFGeneralizedPareto(param_init=[-1.0, 1.1, 0.01, 0.01],
+                                                param_func=jax_utils.linear_exp_split)
     tf_dist.fit(data, cond={'tprime' : tprime})
     print(tf_dist)
 
     _make_ns_plot(data, tf_dist, 'non_stationary_gpd.png')
 
 if __name__ == '__main__':
-    test_pos_only()
+    test_tf_gpd_ns_fit()
