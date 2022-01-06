@@ -177,8 +177,8 @@ def test_tf_gpd_fit(data=get_data_rnd(100_000)):
 
 def test_real_data():
     data = get_real_data()
-    #test_tf_gpd_fit(data)
-    test_tf_weibull_fit(data)
+    test_tf_gpd_fit(data)
+    test_tf_weibull_fit(data/data.std())
 
 if __name__ == '__main__':
     test_real_data()
