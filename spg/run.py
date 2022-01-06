@@ -92,5 +92,5 @@ if __name__ == '__main__':
     #spg_ss = fit_spg(data, use_tf=False)
     preds = gen_preds(spg_tf, data)
 
-    #predictions = pd.Series(preds, index=data.index)
-    #make_nc(predictions, output_path_ens / fname_obs)
+    predictions = pd.Series(preds, index=data.index)
+    make_nc(predictions, output_path_ens / fname_obs)

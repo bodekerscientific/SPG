@@ -47,8 +47,8 @@ class SPG():
             dist = self._select_dist(prob_sel)
             # Calculate the value using the inverse of the cdf (ppf), we scale the prob by the max value allowed
             # For the distribution.
-            rain = dist.ppf(prob_dist*dist.max_prob, cond['rain']) + dist.offset + self.rainday.thresh
-            rain *= self._scale
+            rain = dist.ppf(prob_dist*dist.max_prob, cond['rain']) + dist.offset
+            rain = rain*self._scale + self.rainday.thresh
         else:
             rain = 0.0
 
@@ -70,15 +70,15 @@ class SPG():
     def fit(self, data):
         self.rainday.fit(data)
         
-        data = data[data >= self.rainday.thresh]
+        data = data[data >= self.rainday.thresh] - self.rainday.thresh
         self._scale = data.std()
-        
-        data = data/self._scale - self.rainday.thresh
+        data = data/self._scale
+
         self.thresholds = np.quantile(data, list(self.dist_thresh) + [1.0])
         
         # Ensure we don't miss any data
         thresh = self.thresholds.copy()
-        thresh[-1] = self.max_val
+        thresh[-1] = self.max_val/self._scale
 
         for lower, upper, key in zip(self.thresholds[:-1], self.thresholds[1:], self.dist_thresh):
             data_sub = data[(data>=lower) & (data<upper)]
@@ -90,7 +90,7 @@ class SPG():
 
             # We save the max_prob, so we can generate values greater then the max val.
             if np.isfinite(upper):
-                max_prob = self.dists[key].cdf(upper)
+                max_prob = self.dists[key].cdf(upper - lower)
                 self.dists[key].max_prob = max_prob
             
     def print_params(self, ):
