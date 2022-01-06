@@ -113,7 +113,7 @@ def test_dry_day_ar():
     data = jnp.array(get_data_rnd())
     dist.fit(data)
     assert len(dist.get_params()) == 3
-    print(dist.params)
+    print(dist.get_params)
     print(dist.ppf(0.6, x=jnp.array([[1, 1]])))
     print(dist.ppf(0.7, x=jnp.array([[0, 1]])))
     print(dist.ppf(0.7, x=jnp.array([[0, 0]])))
@@ -125,7 +125,7 @@ def test_dry_day_ar_order(data = get_real_data()):
     dist.fit(data)
     assert len(dist.get_params()) == 3
     
-    print(dist.params)
+    print(dist.get_params())
     a = dist.get_thresh(x=jnp.array([[1, 1]]))
     b = dist.get_thresh(x=jnp.array([[0, 0]]))
     print(a, b)
