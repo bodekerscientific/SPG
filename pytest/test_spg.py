@@ -45,7 +45,7 @@ def _get_preds(sp, num_steps=1000):
 
 def test_simple_spg(data = load_data()):
     #data[data > 50] = 0
-    thresh = 0.2
+    thresh = 0.1
     rd = distributions.RainDay(thresh=thresh, ar_depth=2)
 
     rng = random.PRNGKey(42)

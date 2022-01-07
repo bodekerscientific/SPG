@@ -1,12 +1,13 @@
-from spg.generator import SPG
-from spg import distributions
 from bslibs.plot.qqplot import qqplot
 
 import pandas as pd
 import jax.numpy as jnp
 from jax import random
 import matplotlib.pyplot as plt
-from data_utils import load_data, load_magic, make_nc
+from functools import partial
+
+from spg.generator import SPG
+from spg import distributions, jax_utils, data_utils, generator
 from pathlib import Path
 
 
@@ -27,32 +28,85 @@ def fit_spg(data, use_tf=False, ar_depth=2, thresh=0.1):
 
     return sp
 
+
+def cond_func(values, last_cond):
+    rain = values[-1]
+    is_rain = float(rain > 0)
+
+    return {k: generator.cycle(last_cond[k], v) if last_cond[k] is not None else None
+            for k, v in zip(['rainday', 'rain'], [is_rain, rain])}
+
+
+def cond_func_ns(values, last_cond, data=None):
+    rain = values[-1]
+    is_rain = float(rain > 0)
+
+    # The index will be the length of values, used to get t_prime.
+    idx = len(values) - 1
+
+    cond_next = {'rainday': generator.cycle(last_cond['rainday'], is_rain)}
+    cond_next['rain'] = {'tprime': data['tprime'][idx]}
+    return cond_next
+
+
 def plot_qq(target, predictions, output_path):
     plt.figure(figsize=(12, 8))
     qqplot(target, predictions, linewidth=0)
     plt.xlabel('Observations [mm/day]')
     plt.ylabel('Predictions [mm/day]')
-    plt.xlim(0, 200)
-    plt.ylim(0, 200)
+    max_val = max(target.max(), predictions.max())
+    plt.xlim(0, max_val)
+    plt.ylim(0, max_val)
     plt.savefig(output_path,  dpi=250)
     plt.close()
 
 
-def gen_preds(sp: SPG, data: pd.Series, num_steps=None, plot_folder=Path('./')):
-    if num_steps is None:
-        num_steps = len(data)
+def fit_spg_ns(data, t_prime, ar_depth=2, thresh=0.1):
+    rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
+
+    rain_dists = {0: distributions.TFWeibull(param_init=[0.75, 1.0, 0.01, 0.01],
+                                             param_func=jax_utils.linear_exp_split),
+                  0.99: distributions.TFGeneralizedPareto(param_init=[-1.0, 1.1, 0.01, 0.01],
+                                                          param_func=jax_utils.linear_exp_split)}
+
+    rng = random.PRNGKey(42)
+    sp = SPG(rd, rain_dists, rng)
+
+    sp.fit(data.values, cond={'tprime': t_prime})
+    sp.print_params()
+
+    return sp
+
+
+def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-1', plot_folder=Path('./'), tprime=None):
+    times = pd.date_range(start=start_date, end=end_date)
+    tprime = data_utils.get_tprime_for_times(times, tprime)
 
     rd = sp.rainday
     cond = {'rain': None, 'rainday': jnp.array([[1]*rd.ar_depth])}
-    #time = pd.date_range(start=data.index[0], end='2050-1-1')
-    predictions = sp.generate(num_steps=num_steps, cond_init=cond)
+
+    if tprime is not None:
+        cond['rain'] = {'tprime' : tprime[0]}
+        predictions = sp.generate(num_steps=len(times), cond_init=cond, 
+                                  cond_func=partial(cond_func_ns, data={'tprime' : tprime}))
+    else:
+         predictions = sp.generate(num_steps=len(times), cond_init=cond, 
+                                  cond_func=cond_func)
+
     print(f'{(predictions >= rd.thresh).sum()/predictions.size} expected {(data >= rd.thresh).sum()/data.size}')
 
     if plot_folder:
-        plot_qq(data, predictions, output_path =plot_folder / 'qq.png')
+        plot_qq(data, predictions, output_path=plot_folder / 'qq.png')
 
-    return predictions
+    return pd.Series(predictions, index=times)
 
+
+def run_non_stationary(output_path, data, num_ens=1):
+    df_magic = data_utils.load_magic()
+    t_prime = data_utils.get_tprime_for_times(data.index, df_magic['ssp245'])
+    sp = fit_spg_ns(data, t_prime)
+    predictions = gen_preds(sp, data, tprime=df_magic['rcp85'])
+    data_utils.make_nc(predictions, output_path / 'dunedin_rcp85.nc')
 
 
 if __name__ == '__main__':
@@ -64,12 +118,13 @@ if __name__ == '__main__':
     output_path_obs = output_path / 'station_data'
     output_path_ens = output_path / 'ensemble'
 
-    data = load_data(fpath)
-    make_nc(data, output_path_obs / fname_obs)
+    data = data_utils.load_data(fpath)
+    run_non_stationary(output_path_ens, data)
 
-    spg_tf = fit_spg(data, use_tf=True)
+    #data_utils.make_nc(data, output_path_obs / fname_obs)
+    #spg_tf = fit_spg(data, use_tf=True)
     #spg_ss = fit_spg(data, use_tf=False)
-    preds = gen_preds(spg_tf, data)
+    #preds = gen_preds(spg_tf, data)
 
-    predictions = pd.Series(preds, index=data.index)
-    make_nc(predictions, output_path_ens / fname_obs)
+    #predictions = pd.Series(preds, index=data.index)
+    #data_utils.make_nc(predictions, output_path_ens / fname_obs)

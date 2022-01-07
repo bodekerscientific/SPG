@@ -70,7 +70,7 @@ class Dist():
     def ppf(self, p, cond=None):
         raise NotImplementedError('Need to make a subclass')
 
-    def fit(self, data):
+    def fit(self, data, cond=None):
         raise NotImplementedError('Need to make a subclass')
         
     def __repr__(self, ):
@@ -125,9 +125,9 @@ class TFWeibull(TFPDist):
         params = self.get_params(cond)
         return params[0], 0.0, params[1]
 
-    def fit(self, data, **kwargs):
-        #self.params = self._params.at[1].set(data.std())
-        super().fit(data, **kwargs)
+    # def fit(self, data, **kwargs):
+    #     #self.params = self._params.at[1].set(data.std())
+    #     super().fit(data, **kwargs)
 
 
 class TFGeneralizedPareto(TFPDist):
@@ -166,7 +166,7 @@ class SSDist(Dist):
 
         return self.dist.ppf(p, *self.get_params(cond))
 
-    def fit(self, data, eps=1e-12):
+    def fit(self, data, cond=None, eps=1e-12):
         self._params = self.dist.fit(data + eps, floc=0.0)
 
 

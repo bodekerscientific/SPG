@@ -1,7 +1,7 @@
 import numpy as np
 from spg.distributions import Dist 
 
-from jax import random
+from jax import random, jit
 import jax.numpy as jnp
 
 
@@ -15,6 +15,12 @@ def cycle(arr, val):
     arr = arr.at[..., :-1].set(arr[..., 1:])
     return arr.at[..., -1:].set(val)
 
+
+def apply_mask_to_dict(target, mask):
+    return {k : v[mask] if v.size == mask.size else v for k,v in target.items()}
+
+def apply_func_to_dict(target, func):
+    return {k : func(v) for k,v in target.items()}
 
 class SPG():
     def __init__(self, rainday: Dist, rain_dists: dict, random_key: random.PRNGKey, max_val=500):
@@ -48,29 +54,35 @@ class SPG():
             # Calculate the value using the inverse of the cdf (ppf), we scale the prob by the max value allowed
             # For the distribution.
             rain = dist.ppf(prob_dist*dist.max_prob, cond['rain']) + dist.offset
+            # Transfor the standardized rain back
             rain = rain*self._scale + self.rainday.thresh
         else:
             rain = 0.0
 
-        cond_next = {k: cycle(cond[k], v) if cond[k] is not None else None 
-                    for k, v in zip(['rainday', 'rain'], [is_rain, rain])}
+        return rain
 
-        return rain, cond_next
+    def generate(self, num_steps, cond_init: dict, cond_func=None):
+        if cond_func is None:
+            cond_func = lambda x, y: y
 
-    def generate(self, num_steps, cond_init: dict):
         data_out = []
         cond = cond_init
-
+        
         for _ in range(num_steps):
-            val, cond = self.sample(cond)
-            data_out.append(val)
+            val = self.sample(cond)
+            data_out.append(float(val))
+            cond = cond_func(data_out, cond)
 
-        return np.array(data_out)
+        return np.stack(data_out)
 
-    def fit(self, data):
+    def fit(self, data, cond=None):
         self.rainday.fit(data)
         
-        data = data[data >= self.rainday.thresh] - self.rainday.thresh
+        # Subset the rain days only
+        mask = data >= self.rainday.thresh
+        cond = apply_mask_to_dict(cond, mask)
+
+        data = data[mask] - self.rainday.thresh
         self._scale = data.std()
         data = data/self._scale
 
@@ -81,16 +93,21 @@ class SPG():
         thresh[-1] = self.max_val/self._scale
 
         for lower, upper, key in zip(self.thresholds[:-1], self.thresholds[1:], self.dist_thresh):
-            data_sub = data[(data>=lower) & (data<upper)]
+            mask_sub = (data>=lower) & (data<upper)
+
+            data_sub = data[mask_sub]
+            cond_sub = apply_mask_to_dict(cond, mask_sub)
+
             print(f'Fitting dist, q={key}, from {lower*self._scale} to {upper*self._scale} with {len(data_sub)} datapoints')
             
-            self.dists[key].fit(data_sub - lower)
+            self.dists[key].fit(data_sub - lower, cond_sub)
             # We need to remember the offset, to shift the data back
             self.dists[key].offset = lower
 
             # We save the max_prob, so we can generate values greater then the max val.
             if np.isfinite(upper):
-                max_prob = self.dists[key].cdf(upper - lower)
+                # Take the mean of the function for now.
+                max_prob = self.dists[key].cdf(upper - lower, apply_func_to_dict(cond, jnp.mean))
                 self.dists[key].max_prob = max_prob
             
     def print_params(self, ):

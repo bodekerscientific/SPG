@@ -6,6 +6,12 @@ from pathlib import Path
 def load_magic(target_path='data/magic_tprime_sh_land.csv'):
     return pd.read_csv(target_path, parse_dates=['date'], index_col='date')
 
+def get_tprime_for_times(dates, tprime_df):
+    dates = pd.DatetimeIndex(dates)
+    years = dates.year
+    temp = pd.Series(tprime_df.values, index=tprime_df.index.year)
+    return temp.loc[years].values
+
 def make_nc(data, output_path):
     da = xr.DataArray.from_series(data)
     da.name = 'precipitation'
@@ -24,3 +30,10 @@ def load_data(fpath="/mnt/temp/projects/emergence/data_keep/station_data/dunedin
 
     df['date'] = pd.to_datetime(df['Date(UTC)'].values, format='%Y%m%d:%H%M')
     return pd.Series(df['Amount(mm)'].values, index=df['date'].values)
+
+if __name__ == '__main__':
+    df_magic = load_magic()
+    data = load_data()
+    t_prime = get_tprime_for_times(data.index, df_magic['ssp245'])
+    
+    #print(t_prime)
