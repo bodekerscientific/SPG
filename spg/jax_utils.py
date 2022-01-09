@@ -26,8 +26,8 @@ def pos_only(x):
     """ Ensures the values of x always positive"""
     return nn.elu(x) + 1.0
 
-def apply_pos(arr, idx):
-    return arr.at[idx].set(pos_only(arr[idx]))
+def apply_func_idx(arr, idx, *args, func=pos_only, **kwargs):
+    return arr.at[idx].set(func(arr[jnp.array(idx)], *args, **kwargs))
 
 def linear_exp_split(params, *args, func=linear_expansion, **kwargs):
     assert len(params) % 2 == 0

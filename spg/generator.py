@@ -23,7 +23,7 @@ def apply_func_to_dict(target, func):
     return {k : func(v) for k,v in target.items()}
 
 class SPG():
-    def __init__(self, rainday: Dist, rain_dists: dict, random_key: random.PRNGKey, max_val=500):
+    def __init__(self, rainday: Dist, rain_dists: dict, random_key: random.PRNGKey, max_val=1000):
         self.rainday = rainday
         self.dists = rain_dists
         self.rnd_key = random_key
@@ -54,6 +54,7 @@ class SPG():
             # Calculate the value using the inverse of the cdf (ppf), we scale the prob by the max value allowed
             # For the distribution.
             rain = dist.ppf(prob_dist*dist.max_prob, cond['rain']) + dist.offset
+            assert jnp.isfinite(rain)
             # Transfor the standardized rain back
             rain = rain*self._scale + self.rainday.thresh
         else:

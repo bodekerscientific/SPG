@@ -5,11 +5,15 @@ import jax.numpy as jnp
 from jax import random
 import matplotlib.pyplot as plt
 from functools import partial
+from pathos.multiprocessing import ProcessingPool as Pool
 
 from spg.generator import SPG
 from spg import distributions, jax_utils, data_utils, generator
 from pathlib import Path
+from itertools import product
+import numpy as np
 
+N_CPU = 20
 
 def fit_spg(data, use_tf=False, ar_depth=2, thresh=0.1):
     rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
@@ -61,11 +65,22 @@ def plot_qq(target, predictions, output_path):
     plt.close()
 
 
+def param_func_scale_only(params, cond=None):
+    # Only non-stationary for the scale param, as the shape is unstable.
+    
+    if cond is not None and 'tprime' in cond and cond['tprime'].size > 1:
+        params_out = jnp.repeat(params[0:1, None], len(cond['tprime']), axis=1)
+    else:
+        params_out = params[:, None]
+        
+    return jnp.concatenate([params_out, jax_utils.linear_exp_split(params[1:], cond)], axis=0)
+
+
 def fit_spg_ns(data, t_prime, ar_depth=2, thresh=0.1):
     rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
 
-    rain_dists = {0: distributions.TFWeibull(param_init=[0.75, 1.0, 0.01, 0.01],
-                                             param_func=jax_utils.linear_exp_split),
+    rain_dists = {0: distributions.TFWeibull(param_init=[0.75, 1.0, 0.5],
+                                             param_func=param_func_scale_only),
                   0.99: distributions.TFGeneralizedPareto(param_init=[-1.0, 1.1, 0.01, 0.01],
                                                           param_func=jax_utils.linear_exp_split)}
 
@@ -78,7 +93,9 @@ def fit_spg_ns(data, t_prime, ar_depth=2, thresh=0.1):
     return sp
 
 
-def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-1', plot_folder=Path('./'), tprime=None):
+def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-1', 
+              plot_folder=Path('./'), tprime=None):
+
     times = pd.date_range(start=start_date, end=end_date)
     tprime = data_utils.get_tprime_for_times(times, tprime)
 
@@ -93,6 +110,7 @@ def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-
          predictions = sp.generate(num_steps=len(times), cond_init=cond, 
                                   cond_func=cond_func)
 
+
     print(f'{(predictions >= rd.thresh).sum()/predictions.size} expected {(data >= rd.thresh).sum()/data.size}')
 
     if plot_folder:
@@ -100,13 +118,28 @@ def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-
 
     return pd.Series(predictions, index=times)
 
+def gen_save(arg, data, sp, df_magic, output_path):
+    sce, ens_num, idx = arg
+    sp.rnd_key = random.PRNGKey(seed=971*(int(idx)+42))
 
-def run_non_stationary(output_path, data, num_ens=1):
+    predictions = gen_preds(sp, data, tprime=df_magic[sce])
+    data_utils.make_nc(predictions, output_path / f'dunedin_{sce}_{str(ens_num).zfill(3)}.nc')
+
+def run_non_stationary(output_path, data, scenario=['rcp26','rcp45','rcp60','rcp85','ssp119','ssp126',
+                                                    'ssp245','ssp370','ssp434','ssp460','ssp585'], num_ens=10,):
+
     df_magic = data_utils.load_magic()
     t_prime = data_utils.get_tprime_for_times(data.index, df_magic['ssp245'])
     sp = fit_spg_ns(data, t_prime)
-    predictions = gen_preds(sp, data, tprime=df_magic['rcp85'])
-    data_utils.make_nc(predictions, output_path / 'dunedin_rcp85.nc')
+
+    ens = list(product(scenario, np.arange(num_ens) + 1))
+    idxs = np.arange(len(ens)) 
+    ens = np.concatenate([np.array(ens), idxs[:, None]], axis=1)
+
+    print(f'Running {len(ens)} scenarios')
+
+    with Pool(N_CPU) as p:
+        p.map(partial(gen_save, data=data, sp=sp, df_magic=df_magic, output_path=output_path), ens)
 
 
 if __name__ == '__main__':

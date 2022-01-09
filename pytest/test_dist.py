@@ -8,7 +8,7 @@ import numpy as np
 from jax.scipy.optimize import minimize
 import jax.numpy as jnp
 import jax
-from functools import cache
+from functools import cache, partial
 import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)
@@ -18,7 +18,7 @@ tfd = tfp.distributions
 # import tensorflow_probability as tfp; tfp = tfp.substrates.jax
 # tfd = tfp.distributions
 
-from spg import distributions, jax_utils
+from spg import distributions, jax_utils, data_utils
 from spg import run
 from spg.generator import cycle
 
@@ -55,11 +55,6 @@ def get_sklearn_test_data():
             'y_test': y_test,
             'n_feat' : n_feat}
             
-@cache
-def get_real_data():
-    fpath = "/mnt/temp/projects/emergence/data_keep/station_data/dunedin_btl_gardens_precip.tsv"
-    return run.load_data(fpath)
-
 
 def get_data_rnd(n=1000):
     np.random.seed(42)
@@ -76,7 +71,7 @@ def test_pos_only():
     assert (jax_utils.pos_only(jnp.array([-10., -1, 3])) > 0).all()
     assert jax_utils.pos_only(jnp.array([-10., -1, 3]))[-1] == 4
     a = jnp.array([-10.0, -1.0, 3.0])
-    b = jax_utils.apply_pos(a, 0)
+    b = jax_utils.apply_func_idx(a, 0)
     assert (a[1:] == b[1:]).all()
     assert b[0] >= 0
     assert jnp.isclose(jax_utils.pos_only(-1000000), 0)
@@ -119,7 +114,7 @@ def test_dry_day_ar():
     print(dist.ppf(0.7, x=jnp.array([[0, 0]])))
 
 
-def test_dry_day_ar_order(data = get_real_data()):
+def test_dry_day_ar_order(data = data_utils.load_data()):
     dist = distributions.RainDay(thresh=0.1, ar_depth=2)
     data = jnp.array(data)
     dist.fit(data)
@@ -196,34 +191,47 @@ def test_tf_gpd_fit(data=get_data_rnd(100_000)):
     #assert np.isclose(tf_dist.ppf(.9), ss_dist.ppf(0.9, shape, loc=loc, scale=scale), atol=1e-5, rtol=1e-4)
 
 def test_real_data():
-    data = get_real_data()
+    data = data_utils.load_data()
     test_tf_gpd_fit(data)
     test_tf_weibull_fit(data/data.std())
 
 def _make_ns_plot(data, dist, output_path):
     plt.figure(figsize=(20, 14))
-    x = jnp.linspace(0, 1, 1000, endpoint=False)
+    x = jnp.linspace(0, 0.97, 1000, endpoint=False)
     t = jnp.ones_like(x)
     for tp in [0, 0.5, 1.0]:
         y = dist.ppf(x, cond={'tprime' : t*tp})
         plt.plot(x, y, label=tp)
+    #plt.yscale('log')
     plt.plot(x, np.quantile(data, x), label='data')
     plt.legend()
+    plt.ylim(0.01)
     plt.savefig(output_path, dpi=300)
     plt.close()
 
 def test_tf_weibull_ns_fit(data=None, tprime=None):
     if data is None:
-        tprime, data = get_data_rnd_non_stationary()
+        data = data_utils.load_data()
+        tprime = np.linspace(0, 1.0, len(data))
 
     mask = data>=.1
     data = data[mask] - .1
     tprime = tprime[mask]
 
-    tf_dist = distributions.TFWeibull(param_init=[0.75, 1.0, 0.01, 0.01],
-                                      param_func=jax_utils.linear_exp_split)
-    ss_dist = ss.weibull_min
+    # Only non-stationary for the scale param, as the shape is unstable.
+    def p_func(params, cond=None):
+        if cond is not None:
+            params_out = jnp.repeat(params[0:1, None], len(cond['tprime']), axis=1)
+        else:
+            params_out = params
+            
+        return jnp.concatenate([params_out, jax_utils.linear_exp_split(params[1:], cond)], axis=0)
 
+
+    tf_dist = distributions.TFWeibull(param_init=[0.75, 1.0, 0.01],
+                                      param_func=p_func)
+    ss_dist = ss.weibull_min
+    
     coefs_ss = list(ss_dist.fit(data, floc=0))
     tf_dist.fit(data, cond={'tprime' : tprime})
     print(tf_dist)
@@ -232,7 +240,7 @@ def test_tf_weibull_ns_fit(data=None, tprime=None):
 
 def test_tf_gpd_ns_fit(data=None, tprime=None):
     if data is None:
-        data = get_real_data()
+        data = data_utils.load_data()
         tprime = np.linspace(0, 1.0, len(data))
 
     thresh = np.quantile(data, 0.99)
@@ -249,4 +257,5 @@ def test_tf_gpd_ns_fit(data=None, tprime=None):
     _make_ns_plot(data, tf_dist, 'non_stationary_gpd.png')
 
 if __name__ == '__main__':
-    test_real_data()
+    #test_tf_gpd_ns_fit()
+    test_tf_weibull_ns_fit()

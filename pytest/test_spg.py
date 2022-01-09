@@ -5,7 +5,8 @@ from jax import random
 from spg.generator import SPG, cycle
 from spg.distributions import Dist, RainDay
 from spg import distributions
-from spg.run import load_data, plot_qq
+from spg.run import plot_qq
+from spg.data_utils import load_data
 import matplotlib.pyplot as plt
 import scipy.stats as ss
 
