@@ -123,7 +123,7 @@ def gen_save(arg, data, sp, df_magic, output_path):
     sp.rnd_key = random.PRNGKey(seed=971*(int(idx)+42))
 
     predictions = gen_preds(sp, data, tprime=df_magic[sce])
-    data_utils.make_nc(predictions, output_path / f'dunedin_{sce}_{str(ens_num).zfill(3)}.nc')
+    data_utils.make_nc(predictions, output_path / f'dunedin_{sce}_{str(ens_num).zfill(3)}.nc', tprime=df_magic[sce])
 
 def run_non_stationary(output_path, data, scenario=['rcp26','rcp45','rcp60','rcp85','ssp119','ssp126',
                                                     'ssp245','ssp370','ssp434','ssp460','ssp585'], num_ens=10,):

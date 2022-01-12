@@ -11,7 +11,7 @@ from functools import partial
 import numpy as np
 
 import jax.numpy as jnp
-from jax import nn
+import flax.linen as nn
 from jax import random
 from jax.experimental.host_callback import id_print
 
@@ -19,10 +19,10 @@ import matplotlib.pyplot as plt
 
 from . import jax_utils
 
-import tensorflow_probability as tfp
-tfp = tfp.substrates.jax
+from tensorflow_probability.substrates import jax as tfp
 tfd = tfp.distributions
-
+tfb = tfp.bijectors
+tfpk = tfp.math.psd_kernels
 
 # Important for convergence
 jax.config.update("jax_enable_x64", True)
@@ -146,6 +146,86 @@ class TFGeneralizedPareto(TFPDist):
         params = self.get_params(cond)
         return params[2], params[0], params[1]
 
+
+class TFMixture(Dist):
+    def __init__(self, dist_mix, num_mix, name='Mixture', param_init=None, num_comp=2, wd=0.03, rng=None, **kwargs):
+        
+        if rng is None:
+            rng = jax.random.PRNGKey(42)
+        self.rng = rng
+
+        if param_init is None:
+            params = jax.random.uniform(rng, (num_mix*(num_comp+1),)) + 0.2
+        else:
+            params = param_init
+            assert len(params) == num_mix*(num_comp+1)
+
+        self.wd = wd
+        self.distComp = dist_mix
+        super().__init__(name, params, **kwargs)
+
+    def make_dist(self, params=None, cond=None):
+        if params is None:
+            params = self._params
+
+        params, probs = self.param_func(params, cond)
+        
+        dist_mix = self.distComp(*params)
+        return tfd.MixtureSameFamily(components_distribution=dist_mix, mixture_distribution=tfd.Categorical(probs=probs))
+
+    def fit(self, data, cond=None, fit_func=fit, eps=1e-12, weighting=None):
+        def loss_func(params, weight_decay=self.wd):
+            res = self.log_prob(data, cond=cond, params=params, weighting=weighting)
+            # id_print(res)
+            # id_print(params)
+            # We don't include the probs in the loss function
+            wd =  0.5 * weight_decay * params[:-1]@params[:-1]
+            #id_print(wd)
+            return res + wd
+
+        res = fit_func(loss_func, self._params)
+        self._params = res.x
+        assert res.success
+
+    def log_prob(self, data, cond=None, params=None, eps=1e-12, weighting=None):
+        if params is None:
+            params = self._params
+        
+        if weighting is None:
+            weighting = jnp.ones_like(data.size)
+        else:
+            weighting = jnp.array(weighting)
+
+        return  -(self.make_dist(params, cond=cond).log_prob(data[:, None]+eps)*weighting).mean()
+
+    def cdf(self, x, cond=None):
+        return self.make_dist(cond=cond).cdf(x)
+
+    def sample(self, n, cond=None, rng=None):
+        if rng is None:
+            rng = self.rng
+        return self.make_dist(cond=cond).sample(n, seed=rng)
+
+def post_process_mix(params, cond=None, num_comp=2, pos_only=True):
+    """ Extract the paramaters for the mixture and the weighting of the params. """
+    params = params.reshape((num_comp+1, -1))
+    if pos_only:
+        params = jax_utils.pos_only(params)
+    
+    probs = params[-1:]
+    return params[:-1], nn.softmax(probs)
+
+TFGammaMix = partial(TFMixture, dist_mix=tfd.Gamma, name='GammaMix', 
+                    param_func=post_process_mix)
+
+TFLogNormMix = partial(TFMixture, dist_mix=tfd.LogNormal, name='LogNormMix', 
+                       param_func=post_process_mix)
+ 
+TFWeibullMix = partial(TFMixture, dist_mix=tfd.Weibull, name='WeibullMix', 
+                       param_func=post_process_mix)
+
+TFInverseGammaMix = partial(TFMixture, dist_mix=tfd.InverseGamma, name='InverseGamma', 
+                       param_func=post_process_mix)
 
 class SSDist(Dist):
     def __init__(self, ss_dist, name):
