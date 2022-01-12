@@ -57,7 +57,7 @@ class Dist():
             self.param_post = lambda x : x
         
         self.offset = None
-        self.max_prob = None
+        self.max_prob = 1.0
         if self._params is not None:
             print(f'Created distribution, {self.name} with {len(self._params)} elements')
         
@@ -148,14 +148,14 @@ class TFGeneralizedPareto(TFPDist):
 
 
 class TFMixture(Dist):
-    def __init__(self, dist_mix, num_mix, name='Mixture', param_init=None, num_comp=2, wd=0.03, rng=None, **kwargs):
+    def __init__(self, dist_mix, num_mix, name='Mixture', param_init=None, num_comp=2, wd=0.01, rng=None, **kwargs):
         
         if rng is None:
             rng = jax.random.PRNGKey(42)
         self.rng = rng
 
         if param_init is None:
-            params = jax.random.uniform(rng, (num_mix*(num_comp+1),)) + 0.2
+            params = jax.random.normal(rng, (num_mix*(num_comp+1),)) 
         else:
             params = param_init
             assert len(params) == num_mix*(num_comp+1)
@@ -176,8 +176,8 @@ class TFMixture(Dist):
     def fit(self, data, cond=None, fit_func=fit, eps=1e-12, weighting=None):
         def loss_func(params, weight_decay=self.wd):
             res = self.log_prob(data, cond=cond, params=params, weighting=weighting)
-            # id_print(res)
-            # id_print(params)
+            id_print(res)
+            id_print(params)
             # We don't include the probs in the loss function
             wd =  0.5 * weight_decay * params[:-1]@params[:-1]
             #id_print(wd)

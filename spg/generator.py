@@ -82,7 +82,7 @@ class SPG():
 
         return np.stack(data_out)
 
-    def fit(self, data, cond=None):
+    def fit(self, data, cond=None, use_max_prob=False):
         self.rainday.fit(data)
         
         # Subset the rain days only
@@ -112,11 +112,11 @@ class SPG():
             self.dists[key].offset = lower
 
             # We save the max_prob, so we can generate values greater then the max val.
-            if np.isfinite(upper):
+            if np.isfinite(upper) and use_max_prob:
                 # Take the mean of the function for now.
                 max_prob = self.dists[key].cdf(upper - lower, apply_func_to_dict(cond, jnp.mean))
                 self.dists[key].max_prob = max_prob
-            
+                
     def print_params(self, ):
         print(self.rainday)
         for d in self.dists.values():

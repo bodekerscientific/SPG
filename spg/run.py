@@ -15,23 +15,6 @@ import numpy as np
 
 N_CPU = 20
 
-def fit_spg(data, use_tf=True, ar_depth=2, thresh=0.1):
-    rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
-
-    if use_tf:
-        rain_dists = {0: distributions.TFGammaMix(num_mix=3),
-                      0.99: distributions.TFGeneralizedPareto()}
-    else:
-        rain_dists = {0: distributions.SSWeibull(),
-                      0.99: distributions.SSGeneralizedPareto()}
-    rng = random.PRNGKey(42)
-
-    sp = SPG(rd, rain_dists, rng)
-    sp.fit(data.values)
-    sp.print_params()
-
-    return sp
-
 
 def cond_func(values, last_cond):
     rain = values[-1]
@@ -76,6 +59,23 @@ def param_func_scale_only(params, cond=None):
     return jnp.concatenate([params_out, jax_utils.linear_exp_split(params[1:], cond)], axis=0)
 
 
+def fit_spg(data, use_tf=True, ar_depth=2, thresh=0.1):
+    rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
+
+    if use_tf:
+        rain_dists = {0: distributions.TFGammaMix(num_mix=6),
+                      0.99: distributions.TFGeneralizedPareto()}
+    else:
+        rain_dists = {0: distributions.SSWeibull(),
+                      0.99: distributions.SSGeneralizedPareto()}
+    rng = random.PRNGKey(42)
+
+    sp = SPG(rd, rain_dists, rng)
+    sp.fit(data.values)
+    sp.print_params()
+
+    return sp
+
 def fit_spg_ns(data, t_prime, ar_depth=2, thresh=0.1):
     rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
 
@@ -91,7 +91,6 @@ def fit_spg_ns(data, t_prime, ar_depth=2, thresh=0.1):
     sp.print_params()
 
     return sp
-
 
 def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-1', 
               plot_folder=Path('./'), tprime=None):
@@ -142,7 +141,7 @@ def run_non_stationary(output_path, data, scenario=['rcp26','rcp45','rcp60','rcp
 
 def test_fit(data):
     sp = fit_spg(data)
-    preds = gen_preds(sp, data, start_date='1950-1-1', end_date='1960-1-1')
+    preds = gen_preds(sp, data, start_date='1950-1-1', end_date='1980-1-1')
     print(preds)
 
 if __name__ == '__main__':
