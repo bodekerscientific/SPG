@@ -206,6 +206,12 @@ class TFMixture(Dist):
             rng = self.rng
         return self.make_dist(cond=cond).sample(n, seed=rng)
 
+    def ppf(self, x, cond=None):
+        params, probs = self.param_func(self._params, cond)
+        dist_sub = self.distComp(*params)        
+        return dist_sub.quantile(x) @ np.squeeze(probs)
+
+
 def post_process_mix(params, cond=None, num_comp=2, pos_only=True):
     """ Extract the paramaters for the mixture and the weighting of the params. """
     params = params.reshape((num_comp+1, -1))
@@ -224,8 +230,9 @@ TFLogNormMix = partial(TFMixture, dist_mix=tfd.LogNormal, name='LogNormMix',
 TFWeibullMix = partial(TFMixture, dist_mix=tfd.Weibull, name='WeibullMix', 
                        param_func=post_process_mix)
 
-TFInverseGammaMix = partial(TFMixture, dist_mix=tfd.InverseGamma, name='InverseGamma', 
-                       param_func=post_process_mix)
+# Not fitting accurately
+# TFInverseGammaMix = partial(TFMixture, dist_mix=tfd.InverseGamma, name='InverseGamma', 
+#                        param_func=post_process_mix)
 
 class SSDist(Dist):
     def __init__(self, ss_dist, name):

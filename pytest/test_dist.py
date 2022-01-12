@@ -294,7 +294,7 @@ def test_mixture():
     # num_mix = 5
 
     for dist in [distributions.TFGammaMix, distributions.TFWeibullMix, 
-                 distributions.TFInverseGammaMix, distributions.TFLogNormMix]:
+                 distributions.TFLogNormMix]:
         dist = dist(num_mix=3)
         print(f'----------------- Fitting distribution {dist.name} -----------------')
         dist.fit(data, weighting=(data**2+1))
@@ -303,10 +303,6 @@ def test_mixture():
 
         # a = np.linspace(0., 40, 1000)
         sample = dist.sample(len(data))
-        mask = sample > 300/scale
-        print(f'Skipped : {mask.sum()}')
-        sample = sample[~mask]
-        run.plot_qq(data*scale, sample*scale, f'mixture_{dist.name}.png')
 
     # print(f'Log Prob: {(-make_dist(params).log_prob(data+eps)).mean()}' )
 

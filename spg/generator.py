@@ -17,10 +17,16 @@ def cycle(arr, val):
 
 
 def apply_mask_to_dict(target, mask):
-    return {k : v[mask] if v.size == mask.size else v for k,v in target.items()}
+    if target is None:
+        return None
+    else:
+        return {k : v[mask] if v.size == mask.size else v for k,v in target.items()}
 
 def apply_func_to_dict(target, func):
-    return {k : func(v) for k,v in target.items()}
+    if target is None:
+        return None
+    else:
+        return {k : func(v) for k,v in target.items()}
 
 class SPG():
     def __init__(self, rainday: Dist, rain_dists: dict, random_key: random.PRNGKey, max_val=1000):

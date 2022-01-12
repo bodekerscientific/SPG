@@ -15,11 +15,11 @@ import numpy as np
 
 N_CPU = 20
 
-def fit_spg(data, use_tf=False, ar_depth=2, thresh=0.1):
+def fit_spg(data, use_tf=True, ar_depth=2, thresh=0.1):
     rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
 
     if use_tf:
-        rain_dists = {0: distributions.TFWeibull(),
+        rain_dists = {0: distributions.TFGammaMix(num_mix=3),
                       0.99: distributions.TFGeneralizedPareto()}
     else:
         rain_dists = {0: distributions.SSWeibull(),
@@ -97,12 +97,11 @@ def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-
               plot_folder=Path('./'), tprime=None):
 
     times = pd.date_range(start=start_date, end=end_date)
-    tprime = data_utils.get_tprime_for_times(times, tprime)
-
     rd = sp.rainday
     cond = {'rain': None, 'rainday': jnp.array([[1]*rd.ar_depth])}
 
     if tprime is not None:
+        tprime = data_utils.get_tprime_for_times(times, tprime)
         cond['rain'] = {'tprime' : tprime[0]}
         predictions = sp.generate(num_steps=len(times), cond_init=cond, 
                                   cond_func=partial(cond_func_ns, data={'tprime' : tprime}))
@@ -141,6 +140,10 @@ def run_non_stationary(output_path, data, scenario=['rcp26','rcp45','rcp60','rcp
     with Pool(N_CPU) as p:
         p.map(partial(gen_save, data=data, sp=sp, df_magic=df_magic, output_path=output_path), ens)
 
+def test_fit(data):
+    sp = fit_spg(data)
+    preds = gen_preds(sp, data, start_date='1950-1-1', end_date='1960-1-1')
+    print(preds)
 
 if __name__ == '__main__':
     fpath = "/mnt/temp/projects/emergence/data_keep/station_data/dunedin_btl_gardens_precip.tsv"
@@ -152,8 +155,8 @@ if __name__ == '__main__':
     output_path_ens = output_path / 'ensemble'
 
     data = data_utils.load_data(fpath)
-    run_non_stationary(output_path_ens, data)
-
+    #run_non_stationary(output_path_ens, data)
+    test_fit(data)
     #data_utils.make_nc(data, output_path_obs / fname_obs)
     #spg_tf = fit_spg(data, use_tf=True)
     #spg_ss = fit_spg(data, use_tf=False)
