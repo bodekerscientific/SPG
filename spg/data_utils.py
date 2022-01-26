@@ -39,9 +39,12 @@ def load_data(fpath="/mnt/temp/projects/emergence/data_keep/station_data/dunedin
     df['date'] = pd.to_datetime(df['Date(UTC)'].values, format='%Y%m%d:%H%M')
     return pd.Series(df['Amount(mm)'].values, index=df['date'].values)
 
+def load_data_hourly(fpath="/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/5212.nc"):
+    ds = xr.open_dataset(fpath)
+    # Select only the hourly values
+    ds.sel(time=(ds.frequency.values == 'H'))
+    return ds['precipitation'].to_series()
+
 if __name__ == '__main__':
-    df_magic = load_magic()
-    data = load_data()
-    t_prime = get_tprime_for_times(data.index, df_magic['ssp245'])
-    
+    load_data_hourly()
     #print(t_prime)
