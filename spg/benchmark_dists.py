@@ -7,7 +7,7 @@ jax.config.update('jax_platform_name', 'cpu')
 jax.config.update("jax_enable_x64", True)
 
 
-def benchmark_mixtures(data, magic_df, num_mix=1):
+def benchmark_mixtures(data, magic_df, num_mix=5):
     mask = data >= .1
     data = data[mask] - .1
     scale = data.std()

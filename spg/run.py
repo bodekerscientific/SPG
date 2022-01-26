@@ -13,6 +13,7 @@ from pathlib import Path
 from itertools import product
 import numpy as np
 
+
 N_CPU = 20
 
 
@@ -59,11 +60,11 @@ def param_func_scale_only(params, cond=None):
     return jnp.concatenate([params_out, jax_utils.linear_exp_split(params[1:], cond)], axis=0)
 
 
-def fit_spg(data, use_tf=True, ar_depth=2, thresh=0.1):
+def fit_spg(data, use_tf=True, ar_depth=12, thresh=0.1):
     rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
 
     if use_tf:
-        rain_dists = {0: distributions.TFGammaMix(num_mix=6),
+        rain_dists = {0: distributions.TFGammaMix(num_mix=3),
                       0.99: distributions.TFGeneralizedPareto()}
     else:
         rain_dists = {0: distributions.SSWeibull(),
@@ -93,9 +94,9 @@ def fit_spg_ns(data, t_prime, ar_depth=2, thresh=0.1):
     return sp
 
 def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-1', 
-              plot_folder=Path('./'), tprime=None):
+              plot_path=Path('./qq.png'), tprime=None, freq='D'):
 
-    times = pd.date_range(start=start_date, end=end_date)
+    times = pd.date_range(start=start_date, end=end_date, freq=freq)
     rd = sp.rainday
     cond = {'rain': None, 'rainday': jnp.array([[1]*rd.ar_depth])}
 
@@ -111,20 +112,21 @@ def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-
 
     print(f'{(predictions >= rd.thresh).sum()/predictions.size} expected {(data >= rd.thresh).sum()/data.size}')
 
-    if plot_folder:
-        plot_qq(data, predictions, output_path=plot_folder / 'qq.png')
+    if plot_path:
+        plot_qq(data, predictions, output_path=plot_path)
 
     return pd.Series(predictions, index=times)
 
-def gen_save(arg, data, sp, df_magic, output_path):
+def gen_save(arg, data, sp, df_magic, output_path, **kwargs):
     sce, ens_num, idx = arg
     sp.rnd_key = random.PRNGKey(seed=971*(int(idx)+42))
 
-    predictions = gen_preds(sp, data, tprime=df_magic[sce])
+    predictions = gen_preds(sp, data, tprime=df_magic[sce], **kwargs)
     data_utils.make_nc(predictions, output_path / f'dunedin_{sce}_{str(ens_num).zfill(3)}.nc', tprime=df_magic[sce])
 
 def run_non_stationary(output_path, data, scenario=['rcp26','rcp45','rcp60','rcp85','ssp119','ssp126',
-                                                    'ssp245','ssp370','ssp434','ssp460','ssp585'], num_ens=10,):
+                                                    'ssp245','ssp370','ssp434','ssp460','ssp585'], num_ens=1,
+                                                    **kwargs):
 
     df_magic = data_utils.load_magic()
     t_prime = data_utils.get_tprime_for_times(data.index, df_magic['ssp245'])
@@ -137,29 +139,31 @@ def run_non_stationary(output_path, data, scenario=['rcp26','rcp45','rcp60','rcp
     print(f'Running {len(ens)} scenarios')
 
     with Pool(N_CPU) as p:
-        p.map(partial(gen_save, data=data, sp=sp, df_magic=df_magic, output_path=output_path), ens)
+        p.map(partial(gen_save, data=data, sp=sp, df_magic=df_magic, output_path=output_path, **kwargs), ens)
 
-def test_fit(data):
+def test_fit(data, **kwargs):
     sp = fit_spg(data)
-    preds = gen_preds(sp, data, start_date='1950-1-1', end_date='1980-1-1')
+    preds = gen_preds(sp, data, start_date='1950-1-1', end_date='1980-1-1', **kwargs)
     print(preds)
 
+
 if __name__ == '__main__':
-    fpath = "/mnt/temp/projects/emergence/data_keep/station_data/dunedin_btl_gardens_precip.tsv"
+    # fpath = "/mnt/temp/projects/emergence/data_keep/station_data/dunedin_btl_gardens_precip.tsv"
     fname_obs = 'dunedin.nc'
-    fname_ens = fname_obs.replace('.nc', '_001.nc')
-
+    # fname_ens = fname_obs.replace('.nc', '_001.nc')
+    
     output_path = Path('/mnt/temp/projects/otago_uni_marsden/data_keep/spg/')
-    output_path_obs = output_path / 'station_data'
-    output_path_ens = output_path / 'ensemble'
+    output_path_obs = output_path / 'station_data_hourly'
+    output_path_ens = output_path / 'ensemble_hourly'
 
-    data = data_utils.load_data(fpath)
-    #run_non_stationary(output_path_ens, data)
-    test_fit(data)
-    #data_utils.make_nc(data, output_path_obs / fname_obs)
-    #spg_tf = fit_spg(data, use_tf=True)
+    data = data_utils.load_data_hourly()
+    # run_non_stationary(output_path_ens, data, freq='H')
+    #test_fit(data, plot_path=output_path_ens)
+    data_utils.make_nc(data, output_path_obs / 'dunedin.nc')
+    
+    spg_tf = fit_spg(data, use_tf=True)
     #spg_ss = fit_spg(data, use_tf=False)
-    #preds = gen_preds(spg_tf, data)
+    preds = gen_preds(spg_tf, data, plot_path=output_path_ens / 'qq_dunedin.png')
 
-    #predictions = pd.Series(preds, index=data.index)
-    #data_utils.make_nc(predictions, output_path_ens / fname_obs)
+    predictions = pd.Series(preds, index=data.index)
+    data_utils.make_nc(predictions, output_path_ens / fname_obs)

@@ -9,6 +9,8 @@ from spg.run import plot_qq
 from spg.data_utils import load_data
 import matplotlib.pyplot as plt
 import scipy.stats as ss
+from spg import spg_dist
+
 
 _SEED = 42
 
@@ -83,5 +85,27 @@ def test_simple_spg(data = load_data()):
     plot_qq(data, preds_ss, Path('./qq_ss.png'))
     plot_qq(data, preds_tf, Path('./qq_tf.png'))
 
+
+def test_spg_dist():
+    mlp = lambda x : jnp.array([[0, 1]])
+    class test_test():
+        def log_prob(self, params, x, v):
+            return v*1.1
+
+        def ppf(self, params, x, p):
+            return 0.1*p
+    
+    model = spg_dist.BenoilSPG(mlp, test_test(), min_pr=0.1)
+
+    rng = random.PRNGKey(42)
+    batch = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0])
+    y = batch+2.0
+
+    variables = model.init(random.PRNGKey(0), batch, rng)
+    
+    probs = model.apply(variables, batch, y, method=model.log_prob)
+    
+    print(probs)
+
 if __name__ == '__main__':
-    test_simple_spg()
+    test_spg_dist()

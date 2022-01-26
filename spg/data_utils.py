@@ -16,7 +16,8 @@ def make_nc(data, output_path, tprime=None):
     da = xr.DataArray.from_series(data)
     da.name = 'precipitation'
     da.attrs['units'] = 'mm/day'
-    da = da.rename({'index': 'time'})
+    if 'index' in da:
+        da = da.rename({'index': 'time'})
 
     ds = xr.Dataset()
     ds['precipitation'] = da
