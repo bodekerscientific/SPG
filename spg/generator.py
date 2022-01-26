@@ -100,7 +100,7 @@ class SPG():
         thresh[-1] = self.max_val/self._scale
 
         for lower, upper, key in zip(self.thresholds[:-1], self.thresholds[1:], self.dist_thresh):
-            mask_sub = (data>=lower) & (data<upper)
+            mask_sub = (data>=lower)# & (data<upper)
 
             data_sub = data[mask_sub]
             cond_sub = apply_mask_to_dict(cond, mask_sub)

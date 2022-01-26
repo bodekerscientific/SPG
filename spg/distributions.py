@@ -26,6 +26,7 @@ tfpk = tfp.math.psd_kernels
 
 # Important for convergence
 jax.config.update("jax_enable_x64", True)
+jax.config.update('jax_platform_name', 'cpu')
 
 def fit(func, params_init, options={"gtol": 1e-7}):
     return minimize(func, params_init, method="BFGS", options=options)
@@ -176,8 +177,8 @@ class TFMixture(Dist):
     def fit(self, data, cond=None, fit_func=fit, eps=1e-12, weighting=None):
         def loss_func(params, weight_decay=self.wd):
             res = self.log_prob(data, cond=cond, params=params, weighting=weighting)
-            id_print(res)
-            id_print(params)
+            #id_print(res)
+            #id_print(params)
             # We don't include the probs in the loss function
             wd =  0.5 * weight_decay * params[:-1]@params[:-1]
             #id_print(wd)
