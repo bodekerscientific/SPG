@@ -87,7 +87,7 @@ def test_simple_spg(data = load_data()):
 
 
 def test_spg_dist():
-    mlp = lambda x : jnp.array([[0, 1]])
+
     class test_test():
         def log_prob(self, params, x, v):
             return v*1.1
@@ -95,17 +95,17 @@ def test_spg_dist():
         def ppf(self, params, x, p):
             return 0.1*p
     
-    model = spg_dist.BenoilSPG(mlp, test_test(), min_pr=0.1)
+    model = spg_dist.BenoilSPG(test_test(), min_pr=0.1)
 
     rng = random.PRNGKey(42)
-    batch = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0])
-    y = batch+2.0
+    y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0])
+    x = y[:, None]
 
-    variables = model.init(random.PRNGKey(0), batch, rng)
+    variables = model.init(random.PRNGKey(0), x, rng)
+    probs = model.apply(variables, x, y, method=model.log_prob)
     
-    probs = model.apply(variables, batch, y, method=model.log_prob)
-    
-    print(probs)
+    assert probs.shape[0] == x.shape[0]
 
 if __name__ == '__main__':
-    test_spg_dist()
+    from spg import data_utils
+    data = data_utils.load_data()

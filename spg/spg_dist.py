@@ -1,3 +1,12 @@
+"""
+    SPG using a single nn-module and a MLP for the distribution params
+    
+    @Author Leroy Bird
+    
+    export XLA_PYTHON_CLIENT_PREALLOCATE=false
+
+"""
+
 from typing import Sequence, Callable
 
 import flax.linen as nn
@@ -7,6 +16,18 @@ import jax.numpy as jnp
 import elegy
 import optax
 from jax import random
+
+import numpy as np
+
+
+from spg import jax_utils, data_loader, data_utils
+from bslibs.plot.qqplot import qqplot
+
+from tensorflow_probability.substrates import jax as tfp
+tfd = tfp.distributions
+import matplotlib.pyplot as plt
+from pathlib import Path
+
 
 def safe_log(x):
     return jnp.log(jnp.maximum(x, 1e-6))
@@ -25,9 +46,12 @@ class MLP(nn.Module):
 
 
 class BenoilSPG(nn.Module):
-    mlp : Callable
     dist : Callable
-    min_pr : 0.1
+    mlp_hidden : Sequence[int] = (128,)
+    min_pr : int = 0.1
+
+    def setup(self, ):
+        self.mlp = MLP(self.mlp_hidden+(4,))
 
     @nn.compact
     def __call__(self, x, rng):
@@ -35,7 +59,7 @@ class BenoilSPG(nn.Module):
 
     def _split_params(self, params):
         return params[:, 0:2], params[:, 2:]
-
+    
     def sample(self, x, rng):
         dist_params = self.mlp(x)
         n = x.shape[0]
@@ -44,13 +68,13 @@ class BenoilSPG(nn.Module):
         p_d, p_r = nn.softmax(logit_params).T
 
         rng, rng_rd = random.split(rng, num=2)
-        p_rain, p_dist = random.uniform(rng_rd, (2, n))
+        p_rain, p_dist = random.uniform(rng_rd, (2, n), dtype=x.dtype)
         
-        rd_mask = p_rain <= p_d
+        dd_mask = p_rain <= p_d
 
         output = jnp.zeros(n)
-        output = output.at[rd_mask].set(0.0)
-        output = output.at[~rd_mask].set(self.dist.ppf(dist_params, x, p_dist))
+        output = output.at[dd_mask].set(0.0)
+        output = output.at[~dd_mask].set(self.dist.ppf(dist_params[~dd_mask], p_dist[~dd_mask]))
         
         return output
 
@@ -65,10 +89,26 @@ class BenoilSPG(nn.Module):
         rd_mask = y <= self.min_pr
 
         output = jnp.zeros_like(y)
-        output = output.at[rd_mask].set(p_d)
-        output = output.at[~rd_mask].set(p_r + self.dist.log_prob(dist_params[~rd_mask], x[~rd_mask], y[~rd_mask]))
+        output = output.at[rd_mask].set(p_d[rd_mask])
+        output = output.at[~rd_mask].set(p_r[~rd_mask] + self.dist.log_prob(dist_params[~rd_mask], y[~rd_mask]))
 
         return output
+
+
+class Gamma():
+    def __init__(self,  num_params=2, param_init=None):
+        self.num_params = 2
+        self.param_func = jax_utils.pos_only
+        self.dist = tfd.Gamma
+
+    def log_prob(self, params, data, eps=1e-12):
+        params = self.param_func(params) + eps
+        return self.dist(*params.T).log_prob(data+eps)
+
+    def ppf(self, params, probs, eps=1e-12):
+        params = self.param_func(params)
+        return self.dist(*params.T).quantile(probs)
+
 
 class MixtureModel(elegy.Module):
     def __init__(self, k: int):
@@ -106,13 +146,69 @@ class MixtureNLL(elegy.Loss):
             ),
         )
 
+
+def make_qq(preds : list, targets : list, epoch : int, output_folder = './results'):
+    plt.figure(figsize=(12, 8))
+    targets = np.concatenate(targets, axis=None)
+    preds = np.concatenate(preds, axis=None)
+    qqplot(targets, preds, num_highlighted_quantiles=10)
+    plt.savefig(Path(output_folder) / f'qq_{epoch}.png')
+
+
+def train(model, tr_loader, valid_loader=None, bs=128, lr=1e-4, num_epochs=100):
+
+    rng = random.PRNGKey(42)
+    x = jnp.zeros((bs, 2), dtype=jnp.float32)
+
+    params = model.init(random.PRNGKey(0), x, rng)
+    opt = optax.radam(lr)
+    opt_state = opt.init(params)
+    
+    def loss_func(params, x, y):
+        # Negative Log Likelihood loss
+        probs = model.apply(params, x, y, method=model.log_prob)
+        return (-probs).mean()
+
+    def step(x, y, params, opt_state):
+        loss, grads = jax.value_and_grad(loss_func)(params, x, y)   
+        updates, opt_state = opt.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return loss, params, opt_state
+
+    for epoch in range(1, num_epochs+1):
+        tr_loss = []
+        for n, batch in enumerate(tr_loader):
+            loss, params, opt_state = step(batch[0], batch[1], params, opt_state)
+
+        # Calculate the validation loss
+        val_loss = []
+        preds = []
+        targets = []
+        for batch in valid_loader:
+            val_loss.append(loss_func(params, *batch))
+            rng, sample_rng = random.split(rng)
+            x = batch[0]
+            preds.append(model.apply(params, x, sample_rng, method=model.sample))
+            targets.append(x)
+
+        make_qq(preds, targets, epoch)
+        
+
+        print(f'{epoch}/{num_epochs}, valid loss = {jnp.stack(val_loss).mean()}' )
+
+
 if __name__ == '__main__':
-    model = elegy.Model(
-        module=MixtureModel(k=3), loss=MixtureNLL(), optimizer=optax.adam(3e-4)
-    )
+    model = BenoilSPG(Gamma(), min_pr=0.1)
+    data = data_utils.load_data()
 
-    model.summary(X_train[:batch_size], depth=1)
+    bs = 256
+    tr_loader, val_loader = data_loader.get_data_loaders(data, bs=bs)
+    train(model, tr_loader, val_loader, bs=bs)
 
-    model.fit(
-        x=X_train, y=y_train, epochs=500, batch_size=batch_size, shuffle=True,
-    )
+    # rng = random.PRNGKey(42)
+    # y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0]).astype(jnp.float32)
+    # x = y[:, None]
+
+    # variables = model.init(random.PRNGKey(0), x, rng)
+    
+    # probs = model.apply(variables, x, y, method=model.log_prob)
