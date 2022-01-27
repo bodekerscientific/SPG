@@ -8,15 +8,14 @@
 """
 
 from typing import Sequence, Callable
+from pathlib import Path
 
 import flax.linen as nn
-
 import jax
 import jax.numpy as jnp
 import elegy
 import optax
 from jax import random
-
 import numpy as np
 
 
@@ -25,8 +24,11 @@ from bslibs.plot.qqplot import qqplot
 
 from tensorflow_probability.substrates import jax as tfp
 tfd = tfp.distributions
+
+import matplotlib
+matplotlib.use('AGG')
+
 import matplotlib.pyplot as plt
-from pathlib import Path
 
 
 def safe_log(x):
@@ -149,13 +151,12 @@ class MixtureNLL(elegy.Loss):
 
 def make_qq(preds : list, targets : list, epoch : int, output_folder = './results'):
     plt.figure(figsize=(12, 8))
-    targets = np.concatenate(targets, axis=None)
-    preds = np.concatenate(preds, axis=None)
-    qqplot(targets, preds, num_highlighted_quantiles=10)
+    qqplot(np.array(targets), np.array(preds), num_highlighted_quantiles=10)
     plt.savefig(Path(output_folder) / f'qq_{epoch}.png')
+    plt.close()
 
 
-def train(model, tr_loader, valid_loader=None, bs=128, lr=1e-4, num_epochs=100):
+def train(model, tr_loader, valid_loader=None, bs=128, lr=1e-4, num_epochs=100,  min_pr=0.1):
 
     rng = random.PRNGKey(42)
     x = jnp.zeros((bs, 2), dtype=jnp.float32)
@@ -179,22 +180,29 @@ def train(model, tr_loader, valid_loader=None, bs=128, lr=1e-4, num_epochs=100):
         tr_loss = []
         for n, batch in enumerate(tr_loader):
             loss, params, opt_state = step(batch[0], batch[1], params, opt_state)
-
-        # Calculate the validation loss
+            tr_loss.append(loss)
+        
+        # Calculate the validation loss and generate some samples.
         val_loss = []
         preds = []
         targets = []
         for batch in valid_loader:
             val_loss.append(loss_func(params, *batch))
             rng, sample_rng = random.split(rng)
-            x = batch[0]
+            x, y = batch
             preds.append(model.apply(params, x, sample_rng, method=model.sample))
-            targets.append(x)
+            targets.append(y)
 
+        preds = jnp.concatenate(preds, axis=None)
+        targets = jnp.concatenate(preds, axis=None)
         make_qq(preds, targets, epoch)
         
+        # Calculate the number of rain days
+        dd_target = (targets < min_pr).sum()/targets.size
+        dd_pred = (preds < min_pr).sum()/preds.size
 
-        print(f'{epoch}/{num_epochs}, valid loss = {jnp.stack(val_loss).mean()}' )
+        print(f'{epoch}/{num_epochs}, valid loss : {jnp.stack(val_loss).mean()}, train loss' \
+              f' {jnp.stack(tr_loss).mean()}, dry day {dd_pred}, expected {dd_target}' )
 
 
 if __name__ == '__main__':
