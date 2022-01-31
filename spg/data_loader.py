@@ -7,48 +7,51 @@ import jax
 from spg import data_utils
 from bslibs.regression.datetime_utils import datetimes_to_dec_year
 
+def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], inc_doy=True, inc_tod=True, inc_tprime=True, rd_thresh=0.1):
+    features = []
+    # Select y, and remove the last day as there would be no label        
+    y = pr[1:]
+    dts = y.index
+    y = y.values
+
+    pr = pr[:-1]
+    pr_re_rd = (pr > rd_thresh).astype(np.float32)
+
+    # Decimal day of the year
+    if inc_doy:
+        # Mod 1 as we only want the fraction
+        doy_frac = datetimes_to_dec_year(dts) % 1.0 
+
+        # Use cos and sin doy to remove the jump at the start of a year
+        features.extend([np.cos(2*np.pi*doy_frac), np.sin(2*np.pi*doy_frac)])
+    
+    # Time of the day
+    if inc_tod:
+        hour_frac = dts.hour/24.0
+        features.extend([np.cos(2*np.pi*hour_frac), np.sin(2*np.pi*hour_frac)])
+
+    for av_hr in average_hours:
+        features.append(pr.rolling(av_hr).mean().values) 
+        features.append(pr_re_rd.rolling(av_hr).mean().values)
+    
+    if inc_tprime:
+        df_magic = data_utils.load_magic()
+        features.append(data_utils.get_tprime_for_times(dts, df_magic['ssp245']))
+
+    x = np.stack(np.stack(features), axis=1).astype(np.float32)
+
+    # Remove all the nans        
+    mask = ~(np.isnan(x).any(axis=1) | np.isnan(y))
+
+    return x[mask, :], y[mask]
+
 class PrecipitationDataset(Dataset):
-    def __init__(self, pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], inc_doy=True, inc_tprime=True, rd_thresh=0.1, freq='H'):
-        # self.Y = pr[1:].values
-        # pr = pr[:-1].values
-        # self.X = np.stack([pr, pr > rd_thresh])
+    def __init__(self, pr : pd.Series, freq='H'):
         pr_re = pr.resample(freq).asfreq()
-        # print(f' {(pr_re.isna().sum() / pr_re.size)*100:.2f}% of the values are missing.')
-
-        features = []
-
-        # Select y, and remove the last day as there would be no label        
-        y = pr_re[1:]
-        dts = y.index
-        y = y.values
-
-        pr_re = pr_re[:-1]
-        pr_re_rd = (pr_re > rd_thresh).astype(np.float32)
-
-        if inc_doy:
-            # Mod 1 as we only want the fraction
-            doy_frac = datetimes_to_dec_year(dts) % 1.0 
-
-            # Use cos and sin doy to remove the jump at the start of a year
-            features.extend([np.cos(2*np.pi*doy_frac), np.sin(2*np.pi*doy_frac)])
+        print(f' {(pr_re.isna().sum() / pr_re.size)*100:.2f}% of the values are missing.')
         
-        for av_hr in average_hours:
-            features.append(pr_re.rolling(av_hr).mean().values) 
-            features.append(pr_re_rd.rolling(av_hr).mean().values)
-        
-        if inc_tprime:
-            df_magic = data_utils.load_magic()
-            features.append(data_utils.get_tprime_for_times(dts, df_magic['ssp245']))
-
-        x = np.stack(np.stack(features), axis=1).astype(np.float32)
-
-        # Remove all the nans        
-        mask = ~(np.isnan(x).any(axis=1) | np.isnan(y))
-
-        self.X = x[mask, :]
-        self.Y = y[mask]
-
-        print(f'{(mask.sum()/mask.size)*100:.2f}% of the values are valid after taking calculating the averages')
+        self.X, self.Y = generate_features(pr_re, )
+        print(f'{(len(self.Y)/len(pr_re))*100:.2f}% of the values are valid after taking calculating the averages')
 
 
     def __len__(self):
