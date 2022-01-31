@@ -3,20 +3,24 @@
     
     @Author Leroy Bird
     
-    export XLA_PYTHON_CLIENT_PREALLOCATE=false
+    You might need to set, as TF and Jax will both try grab the full gpu memory.
+        export XLA_PYTHON_CLIENT_PREALLOCATE=false
 
 """
 
-from typing import Sequence, Callable
+import matplotlib.pyplot as plt
+import matplotlib
+from typing import Iterable, Sequence, Callable
 from pathlib import Path
 
 import flax.linen as nn
+from jax.experimental.host_callback import id_print
 import jax
 import jax.numpy as jnp
-import elegy
 import optax
 from jax import random
 import numpy as np
+from functools import partial
 
 
 from spg import jax_utils, data_loader, data_utils
@@ -25,10 +29,11 @@ from bslibs.plot.qqplot import qqplot
 from tensorflow_probability.substrates import jax as tfp
 tfd = tfp.distributions
 
-import matplotlib
 matplotlib.use('AGG')
 
-import matplotlib.pyplot as plt
+
+# Global flag to set a specific platform, must be used at startup.
+#jax.config.update('jax_platform_name', 'cpu')
 
 
 def safe_log(x):
@@ -36,187 +41,236 @@ def safe_log(x):
 
 
 class MLP(nn.Module):
-  features: Sequence[int]
-  act : Callable = nn.gelu
+    features: Sequence[int]
+    act: Callable = nn.gelu
 
-  @nn.compact
-  def __call__(self, x):
-    for feat in self.features[:-1]:
-      x = self.act(nn.Dense(feat)(x))
-    x = nn.Dense(self.features[-1])(x)
-    return x
+    @nn.compact
+    def __call__(self, x):
+        for feat in self.features[:-1]:
+            x = self.act(nn.Dense(feat)(x))
+        x = nn.Dense(self.features[-1])(x)
+        return x
 
 
 class BenoilSPG(nn.Module):
-    dist : Callable
-    mlp_hidden : Sequence[int] = (128,)
-    min_pr : int = 0.1
+    dist: Callable
+    mlp_hidden: Sequence[int] = (128, 128, 128)
+    min_pr: int = 0.1
 
     def setup(self, ):
-        self.mlp = MLP(self.mlp_hidden+(4,))
+        self.mlp = MLP(self.mlp_hidden+(2+self.dist.num_params,))
 
     @nn.compact
     def __call__(self, x, rng):
         self.sample(x, rng)
 
     def _split_params(self, params):
-        return params[:, 0:2], params[:, 2:]
-    
+        return params[0:2], params[2:]
+
     def sample(self, x, rng):
         dist_params = self.mlp(x)
-        n = x.shape[0]
 
         logit_params, dist_params = self._split_params(dist_params)
-        p_d, p_r = nn.softmax(logit_params).T
+        p_d, _ = nn.softmax(logit_params)
 
         rng, rng_rd = random.split(rng, num=2)
-        p_rain, p_dist = random.uniform(rng_rd, (2, n), dtype=x.dtype)
-        
-        dd_mask = p_rain <= p_d
+        p_rain, p_dist = random.uniform(rng_rd, (2,), dtype=x.dtype)
 
-        output = jnp.zeros(n)
-        output = output.at[dd_mask].set(0.0)
-        output = output.at[~dd_mask].set(self.dist.ppf(dist_params[~dd_mask], p_dist[~dd_mask]))
-        
-        return output
+        return jax.lax.cond(
+            p_rain <= p_d,
+            lambda: 0.0,
+            lambda: self.dist.ppf(dist_params, p_dist)
+        )
 
     def log_prob(self, x, y):
-        assert x.shape[0] == y.shape[0]
 
         dist_params = self.mlp(x)
-        
-        logit_params, dist_params = self._split_params(dist_params)
-        p_d, p_r = nn.log_softmax(logit_params).T
-        
-        rd_mask = y <= self.min_pr
 
-        output = jnp.zeros_like(y)
-        output = output.at[rd_mask].set(p_d[rd_mask])
-        output = output.at[~rd_mask].set(p_r[~rd_mask] + self.dist.log_prob(dist_params[~rd_mask], y[~rd_mask]))
+        logit_params, dist_params = self._split_params(dist_params)
+        p_d, p_r = nn.log_softmax(logit_params)
+
+        return jax.lax.cond(
+            y <= self.min_pr,
+            lambda: p_d,
+            lambda: p_r + self.dist.log_prob(dist_params, y)
+        )
+
+
+class Dist():
+
+    def __init__(self, tfp_dist, num_params, param_func=None):
+        self.num_params = num_params
+        self.dist = tfp_dist
+        if param_func is None:
+            def param_func(x): return x
+        self.param_func = param_func
+
+    def __call__(self, params, prob):
+        return self.ppf(self, params, prob)
+
+    def log_prob(self, params, data, eps=1e-12):
+        params = self.param_func(params)
+        return self.dist(*params).log_prob(data+eps)
+
+    def ppf(self, params, prob, eps=1e-12):
+        params = self.param_func(params)
+        return self.dist(*params).quantile(prob)
+
+
+Gamma = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(
+    p+1.0), tfp_dist=tfd.Gamma)
+
+
+class MixtureModel():
+    def __init__(self, dists):
+        self.dists = dists
+        self.num_params: int = 0
+
+        assert len(
+            self.dists) > 0, 'Need at least one distribution for mixture model'
+
+        # Find the total number of params in all the distributions
+        for dist in self.dists:
+            self.num_params += dist.num_params
+
+        self.num_dists = len(self.dists)
+
+        # One extra param for every dist for the weighting
+        self.num_params += self.num_dists
+
+    def _split_params(self, params):
+        return params[0:self.num_dists], params[self.num_dists:]
+
+    def _get_weightning_params(self, params):
+        logit_params, dist_params = self._split_params(params)
+        weightings = nn.softmax(logit_params)
+        return weightings, dist_params
+
+    def _loop_dist_func(self, params, dist_func: Callable):
+        weightings, dist_params = self._get_weightning_params(params)
+        # id_print(weightings)
+        # id_print(dist_params)
+        output = 0.0
+        last_idx = 0
+        # Loop over each distribution and do a weighted sum
+        for w, dist in zip(weightings, self.dists):
+            next_idx = dist.num_params + last_idx
+            p_dist = dist_params[last_idx:next_idx]
+            last_idx = next_idx
+
+            output += w*dist_func(dist, p_dist)
+
+        # id_print(output)
 
         return output
 
+    def ppf(self, params, prob):
+        def dist_func(dist, p_dist):
+            return dist.ppf(p_dist, prob)
 
-class Gamma():
-    def __init__(self,  num_params=2, param_init=None):
-        self.num_params = 2
-        self.param_func = jax_utils.pos_only
-        self.dist = tfd.Gamma
+        return self._loop_dist_func(params, dist_func)
 
-    def log_prob(self, params, data, eps=1e-12):
-        params = self.param_func(params) + eps
-        return self.dist(*params.T).log_prob(data+eps)
+    def log_prob(self, params, y, eps=1e-6):
+        def dist_func(dist, p_dist):
+            # In this case it is more simple to calculate the probability, then log later.
+            return jnp.exp(dist.log_prob(p_dist, y))
 
-    def ppf(self, params, probs, eps=1e-12):
-        params = self.param_func(params)
-        return self.dist(*params.T).quantile(probs)
-
-
-class MixtureModel(elegy.Module):
-    def __init__(self, k: int):
-        super().__init__()
-        self.k = k
-
-    def call(self, x):
-
-        x = elegy.nn.Linear(64, name="backbone")(x)
-        x = jax.nn.relu(x)
-
-        y: np.ndarray = jnp.stack(
-            [elegy.nn.Linear(2, name="component")(x) for _ in range(self.k)], axis=1,
-        )
-
-        # equivalent to: y[..., 1] = 1.0 + jax.nn.elu(y[..., 1])
-        y = jax.ops.index_update(y, jax.ops.index[..., 1], 1.0 + jax.nn.elu(y[..., 1]))
-
-        logits = elegy.nn.Linear(self.k, name="gating")(x)
-        probs = jax.nn.softmax(logits, axis=-1)
-
-        return y, probs
+        prob = self._loop_dist_func(params, dist_func)
+        return jnp.log(prob + eps)
 
 
-class MixtureNLL(elegy.Loss):
-    def call(self, y_true, y_pred):
-        y, probs = y_pred
-        y_true = jnp.broadcast_to(y_true, (y_true.shape[0], y.shape[1]))
-
-        return -safe_log(
-            jnp.sum(
-                probs
-                * jax.scipy.stats.norm.pdf(y_true, loc=y[..., 0], scale=y[..., 1]),
-                axis=1,
-            ),
-        )
+def gamma_mix(num_dists=2):
+    return MixtureModel(dists=[Gamma() for _ in range(num_dists)])
 
 
-def make_qq(preds : list, targets : list, epoch : int, output_folder = './results'):
+def make_qq(preds: list, targets: list, epoch: int, output_folder='./results'):
     plt.figure(figsize=(12, 8))
     qqplot(np.array(targets), np.array(preds), num_highlighted_quantiles=10)
     plt.savefig(Path(output_folder) / f'qq_{epoch}.png')
     plt.close()
 
 
-def train(model, tr_loader, valid_loader=None, bs=128, lr=1e-4, num_epochs=100,  min_pr=0.1):
-
+def train(model, num_feat, tr_loader, valid_loader=None, lr=1e-3, num_epochs=100, cs=128, min_pr=0.1):
     rng = random.PRNGKey(42)
-    x = jnp.zeros((bs, 2), dtype=jnp.float32)
+    x = jnp.zeros((num_feat,), dtype=jnp.float32)
 
     params = model.init(random.PRNGKey(0), x, rng)
-    opt = optax.radam(lr)
+    opt = optax.adamw(lr, weight_decay=0.1)
     opt_state = opt.init(params)
-    
-    def loss_func(params, x, y):
-        # Negative Log Likelihood loss
-        probs = model.apply(params, x, y, method=model.log_prob)
-        return (-probs).mean()
 
+    def loss_func(params, x_b, y_b):
+        # Negative Log Likelihood loss
+        def nll(x, y):
+            return -model.apply(params, x, y, method=model.log_prob)
+
+        # Use vamp to vectorize over the batch dim.
+        return jax.vmap(nll)(x_b, y_b).mean()
+
+    @jax.jit
     def step(x, y, params, opt_state):
-        loss, grads = jax.value_and_grad(loss_func)(params, x, y)   
+        loss, grads = jax.value_and_grad(loss_func)(params, x, y)
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return loss, params, opt_state
+    
+    @jax.jit
+    def val_step(x_b, y_b, params, rng):
+        loss = loss_func(params, x_b, y_b)
+
+        def get_sample(x, rng):
+            rng, sample_rng = random.split(rng)
+            return model.apply(params, x, sample_rng, method=model.sample)
+
+        rngs = random.split(rng, num=len(x_b))
+        pred = jax.vmap(get_sample)(x_b, rngs)
+        return loss, pred, random.split(rng)[1]
 
     for epoch in range(1, num_epochs+1):
         tr_loss = []
         for n, batch in enumerate(tr_loader):
+            #assert not np.isnan(batch[0]).any()
             loss, params, opt_state = step(batch[0], batch[1], params, opt_state)
+            #id_print(loss)
             tr_loss.append(loss)
-        
+
         # Calculate the validation loss and generate some samples.
         val_loss = []
         preds = []
         targets = []
         for batch in valid_loader:
-            val_loss.append(loss_func(params, *batch))
-            rng, sample_rng = random.split(rng)
             x, y = batch
-            preds.append(model.apply(params, x, sample_rng, method=model.sample))
+            loss, pred, rng = val_step(x, y, params, rng)
+            val_loss.append(loss)
+            preds.append(pred)
             targets.append(y)
 
         preds = jnp.concatenate(preds, axis=None)
-        targets = jnp.concatenate(preds, axis=None)
-        make_qq(preds, targets, epoch)
-        
-        # Calculate the number of rain days
+        targets = jnp.concatenate(targets, axis=None)
+
+
+        # Calculate the expected number of rain days
         dd_target = (targets < min_pr).sum()/targets.size
         dd_pred = (preds < min_pr).sum()/preds.size
 
-        print(f'{epoch}/{num_epochs}, valid loss : {jnp.stack(val_loss).mean()}, train loss' \
-              f' {jnp.stack(tr_loss).mean()}, dry day {dd_pred}, expected {dd_target}' )
+        print(f'{epoch}/{num_epochs}, valid loss : {jnp.stack(val_loss).mean()}, train loss'
+              f' {jnp.stack(tr_loss[-20:]).mean()}, dry day {dd_pred}, expected {dd_target}')
+
+        make_qq(preds, targets, epoch)
 
 
 if __name__ == '__main__':
-    model = BenoilSPG(Gamma(), min_pr=0.1)
-    data = data_utils.load_data()
+    model = BenoilSPG(gamma_mix(3), min_pr=0.1)
+    data = data_utils.load_data_hourly()
 
     bs = 256
-    tr_loader, val_loader = data_loader.get_data_loaders(data, bs=bs)
-    train(model, tr_loader, val_loader, bs=bs)
+    tr_loader, val_loader, num_feat = data_loader.get_data_loaders(data, bs=bs)
+    print(f'Num features {num_feat}')
+    train(model, num_feat, tr_loader, val_loader)
 
     # rng = random.PRNGKey(42)
     # y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0]).astype(jnp.float32)
     # x = y[:, None]
 
     # variables = model.init(random.PRNGKey(0), x, rng)
-    
+
     # probs = model.apply(variables, x, y, method=model.log_prob)
