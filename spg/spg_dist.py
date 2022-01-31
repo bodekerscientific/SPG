@@ -8,6 +8,7 @@
 
 """
 
+from math import gamma
 import matplotlib.pyplot as plt
 import matplotlib
 from typing import Iterable, Sequence, Callable
@@ -25,6 +26,8 @@ from functools import partial
 
 from spg import jax_utils, data_loader, data_utils
 from bslibs.plot.qqplot import qqplot
+
+import wandb
 
 from tensorflow_probability.substrates import jax as tfp
 tfd = tfp.distributions
@@ -47,14 +50,17 @@ class MLP(nn.Module):
     @nn.compact
     def __call__(self, x):
         for feat in self.features[:-1]:
-            x = self.act(nn.Dense(feat)(x))
+            x = nn.Dense(feat)(x)
+            norm = nn.BatchNorm(use_running_average=True)
+            x = self.act(norm(x))
+
         x = nn.Dense(self.features[-1])(x)
         return x
 
 
-class BenoilSPG(nn.Module):
+class BernoulliSPG(nn.Module):
     dist: Callable
-    mlp_hidden: Sequence[int] = (128, 128, 128)
+    mlp_hidden: Sequence[int] = (256,)*3
     min_pr: int = 0.1
 
     def setup(self, ):
@@ -148,8 +154,7 @@ class MixtureModel():
 
     def _loop_dist_func(self, params, dist_func: Callable):
         weightings, dist_params = self._get_weightning_params(params)
-        # id_print(weightings)
-        # id_print(dist_params)
+
         output = 0.0
         last_idx = 0
         # Loop over each distribution and do a weighted sum
@@ -189,14 +194,20 @@ def make_qq(preds: list, targets: list, epoch: int, output_folder='./results'):
     plt.savefig(Path(output_folder) / f'qq_{epoch}.png')
     plt.close()
 
+def get_opt(params, max_lr):
+    sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 2000, 40000, 1e-6)
+    opt = optax.adamw(max_lr, weight_decay=0.1)
+    opt = optax.apply_if_finite(opt, 3)
+    opt = optax.lookahead(opt, 5, 0.5,)
+    opt_state = opt.init(params)
+    return opt, opt_state
 
-def train(model, num_feat, tr_loader, valid_loader=None, lr=1e-3, num_epochs=100, cs=128, min_pr=0.1):
+def train(model, num_feat, log, tr_loader, valid_loader, max_lr=1e-3, num_epochs=100, min_pr=0.1):
     rng = random.PRNGKey(42)
     x = jnp.zeros((num_feat,), dtype=jnp.float32)
 
     params = model.init(random.PRNGKey(0), x, rng)
-    opt = optax.adamw(lr, weight_decay=0.1)
-    opt_state = opt.init(params)
+    opt, opt_state = get_opt(params, max_lr)
 
     def loss_func(params, x_b, y_b):
         # Negative Log Likelihood loss
@@ -212,6 +223,7 @@ def train(model, num_feat, tr_loader, valid_loader=None, lr=1e-3, num_epochs=100
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return loss, params, opt_state
+
     
     @jax.jit
     def val_step(x_b, y_b, params, rng):
@@ -231,6 +243,7 @@ def train(model, num_feat, tr_loader, valid_loader=None, lr=1e-3, num_epochs=100
             #assert not np.isnan(batch[0]).any()
             loss, params, opt_state = step(batch[0], batch[1], params, opt_state)
             #id_print(loss)
+            wandb.log({'train_loss_step' : loss})
             tr_loss.append(loss)
 
         # Calculate the validation loss and generate some samples.
@@ -247,25 +260,39 @@ def train(model, num_feat, tr_loader, valid_loader=None, lr=1e-3, num_epochs=100
         preds = jnp.concatenate(preds, axis=None)
         targets = jnp.concatenate(targets, axis=None)
 
-
         # Calculate the expected number of rain days
         dd_target = (targets < min_pr).sum()/targets.size
         dd_pred = (preds < min_pr).sum()/preds.size
 
-        print(f'{epoch}/{num_epochs}, valid loss : {jnp.stack(val_loss).mean()}, train loss'
-              f' {jnp.stack(tr_loss[-20:]).mean()}, dry day {dd_pred}, expected {dd_target}')
+        val_loss = jnp.stack(val_loss).mean()
+        tr_loss = jnp.stack(tr_loss).mean()
+
+        log({'train_loss_epoch': tr_loss,
+             'val_loss': val_loss,
+             'epoch': epoch})
+
+        print(f'{epoch}/{num_epochs}, valid loss : {val_loss:.4f}, train loss'
+              f' {tr_loss:.4f}, dry day prob {dd_pred:.4f}, expected {dd_target:.4f}')
 
         make_qq(preds, targets, epoch)
 
 
 if __name__ == '__main__':
-    model = BenoilSPG(gamma_mix(3), min_pr=0.1)
+    model = BernoulliSPG(gamma_mix(4), min_pr=0.1)
     data = data_utils.load_data_hourly()
+    logging=True
+
+    if logging:
+        wandb.init(entity='bodekerscientific', project='SPG')
+        logger = wandb.log
+    else:
+        logger = lambda *args : None
 
     bs = 256
     tr_loader, val_loader, num_feat = data_loader.get_data_loaders(data, bs=bs)
     print(f'Num features {num_feat}')
-    train(model, num_feat, tr_loader, val_loader)
+
+    train(model, num_feat, logger, tr_loader, val_loader)
 
     # rng = random.PRNGKey(42)
     # y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0]).astype(jnp.float32)

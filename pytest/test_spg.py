@@ -95,7 +95,7 @@ def test_spg_dist():
         def ppf(self, params, x, p):
             return 0.1*p
     
-    model = spg_dist.BenoilSPG(test_test(), min_pr=0.1)
+    model = spg_dist.BernoulliSPG(test_test(), min_pr=0.1)
 
     rng = random.PRNGKey(42)
     y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0])
