@@ -3,7 +3,7 @@
     
     @Author Leroy Bird
     
-    You might need to set, as TF and Jax will both try grab the full gpu memory.
+    You might need to set, as TF and JAX will both try grab the full gpu memory.
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
 
 """
@@ -52,6 +52,7 @@ class MLP(nn.Module):
         for feat in self.features[:-1]:
             x = nn.Dense(feat)(x)
             norm = nn.BatchNorm(use_running_average=True)
+            #norm = nn.LayerNorm()#BatchNorm(use_running_average=True)
             x = self.act(norm(x))
 
         x = nn.Dense(self.features[-1])(x)
@@ -196,14 +197,14 @@ def make_qq(preds: list, targets: list, epoch: int, output_folder='./results'):
 
 def get_opt(params, max_lr):
     sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 2000, 40000, 1e-6)
-    opt = optax.adamw(max_lr, weight_decay=0.1)
+    opt = optax.adamw(sched, weight_decay=0.1)
     opt = optax.apply_if_finite(opt, 3)
-    opt = optax.lookahead(opt, 5, 0.5,)
+    
     opt_state = opt.init(params)
     return opt, opt_state
 
 def train(model, num_feat, log, tr_loader, valid_loader, max_lr=1e-3, num_epochs=100, min_pr=0.1):
-    rng = random.PRNGKey(42)
+    rng = random.PRNGKey(42**2)
     x = jnp.zeros((num_feat,), dtype=jnp.float32)
 
     params = model.init(random.PRNGKey(0), x, rng)
