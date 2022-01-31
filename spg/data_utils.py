@@ -43,7 +43,7 @@ def load_data(fpath="/mnt/temp/projects/emergence/data_keep/station_data/dunedin
 def load_data_hourly(fpath="/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/5212.nc"):
     ds = xr.open_dataset(fpath)
     # Select only the hourly values
-    ds.sel(time=(ds.frequency.values == 'H'))
+    ds = ds.sel(time=ds.period.values == 1)
     return ds['precipitation'].to_series()
 
 if __name__ == '__main__':

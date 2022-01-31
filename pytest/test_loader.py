@@ -6,12 +6,12 @@ def get_ds(data=None):
 
     return data_loader.PrecipitationDataset(data)
 
-def test_dataset():
-    data = data_utils.load_data()
+def test_dataset_hourly():
+    data = data_utils.load_data_hourly()
     ds = get_ds(data)
 
-    assert len(data) - 1 == len(ds)
-    assert ds[0][1] == data[1]
+    print(len(ds))
+
 
 def test_get_dls():
     data = data_utils.load_data()
@@ -24,4 +24,4 @@ def test_get_dls():
     assert next(valid_dd)[0].shape[0] == 128
 
 if __name__ == '__main__':
-    test_get_dls()
+    test_dataset_hourly()
