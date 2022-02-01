@@ -8,12 +8,14 @@
 
 """
 
+from copy import deepcopy
 from math import gamma
 import matplotlib.pyplot as plt
 import matplotlib
 from typing import Iterable, Sequence, Callable
 from pathlib import Path
 
+import flax
 import flax.linen as nn
 from jax.experimental.host_callback import id_print
 import jax
@@ -189,26 +191,44 @@ def gamma_mix(num_dists=2):
     return MixtureModel(dists=[Gamma() for _ in range(num_dists)])
 
 
-def make_qq(preds: list, targets: list, epoch: int, output_folder='./results'):
+def make_qq(preds: list, targets: list, epoch: int, log, output_folder='./results/plots'):
     plt.figure(figsize=(12, 8))
-    qqplot(np.array(targets), np.array(preds), num_highlighted_quantiles=10)
-    plt.savefig(Path(output_folder) / f'qq_{epoch}.png')
+    qqplot(np.array(targets), np.array(preds), num_highlighted_quantiles=10, linewidth=0)
+    output_path = Path(output_folder) / f'qq_{str(epoch).zfill(3)}.png'
+    plt.savefig(output_path, transparent=False, dpi=150)
     plt.close()
 
+    log({'qq_plot' : wandb.Image(str(output_path))})
+
+def save_params(params, epoch : int, output_folder='./results/params'):
+    output_path = Path(output_folder) / f'params_{str(epoch).zfill(3)}.data'
+    
+    params_bytes = flax.serialization.to_bytes(params)
+    with open(output_path, 'wb') as f:
+        f.write(params_bytes)
+    
+    return output_path
+
 def get_opt(params, max_lr):
-    sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 2000, 40000, 1e-6)
+    sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 2000, 40000, 1e-5)
+    # opt = optax.chain(optax.adaptive_grad_clip(0.5),
+    #                   optax.scale_by_radam(),
+    #                   optax.add_decayed_weights(weight_decay=0.1),
+    #                   optax.scale_by_schedule(sched))
     opt = optax.adamw(sched, weight_decay=0.1)
     opt = optax.apply_if_finite(opt, 3)
-    
+    params =  optax.LookaheadParams(params, deepcopy(params))
+    opt = optax.lookahead(opt, 5, 0.5)
     opt_state = opt.init(params)
-    return opt, opt_state
+
+    return opt, opt_state, params
 
 def train(model, num_feat, log, tr_loader, valid_loader, max_lr=1e-3, num_epochs=100, min_pr=0.1):
     rng = random.PRNGKey(42**2)
     x = jnp.zeros((num_feat,), dtype=jnp.float32)
 
     params = model.init(random.PRNGKey(0), x, rng)
-    opt, opt_state = get_opt(params, max_lr)
+    opt, opt_state, params = get_opt(params, max_lr)
 
     def loss_func(params, x_b, y_b):
         # Negative Log Likelihood loss
@@ -220,7 +240,7 @@ def train(model, num_feat, log, tr_loader, valid_loader, max_lr=1e-3, num_epochs
 
     @jax.jit
     def step(x, y, params, opt_state):
-        loss, grads = jax.value_and_grad(loss_func)(params, x, y)
+        loss, grads = jax.value_and_grad(loss_func)(params.fast, x, y)
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return loss, params, opt_state
@@ -228,24 +248,28 @@ def train(model, num_feat, log, tr_loader, valid_loader, max_lr=1e-3, num_epochs
     
     @jax.jit
     def val_step(x_b, y_b, params, rng):
-        loss = loss_func(params, x_b, y_b)
+        loss = loss_func(params.slow, x_b, y_b)
 
         def get_sample(x, rng):
             rng, sample_rng = random.split(rng)
-            return model.apply(params, x, sample_rng, method=model.sample)
+            return model.apply(params.slow, x, sample_rng, method=model.sample)
 
         rngs = random.split(rng, num=len(x_b))
         pred = jax.vmap(get_sample)(x_b, rngs)
         return loss, pred, random.split(rng)[1]
 
+    best_loss = jnp.inf
     for epoch in range(1, num_epochs+1):
         tr_loss = []
         for n, batch in enumerate(tr_loader):
             #assert not np.isnan(batch[0]).any()
             loss, params, opt_state = step(batch[0], batch[1], params, opt_state)
+
             #id_print(loss)
             wandb.log({'train_loss_step' : loss})
             tr_loss.append(loss)
+        
+        param_path = save_params(params.slow, epoch)
 
         # Calculate the validation loss and generate some samples.
         val_loss = []
@@ -264,22 +288,31 @@ def train(model, num_feat, log, tr_loader, valid_loader, max_lr=1e-3, num_epochs
         # Calculate the expected number of rain days
         dd_target = (targets < min_pr).sum()/targets.size
         dd_pred = (preds < min_pr).sum()/preds.size
-
+        
         val_loss = jnp.stack(val_loss).mean()
         tr_loss = jnp.stack(tr_loss).mean()
 
         log({'train_loss_epoch': tr_loss,
              'val_loss': val_loss,
-             'epoch': epoch})
+             'epoch': epoch,
+             'dd_val' : dd_pred,
+             'dd_mae' : jnp.abs(dd_target - dd_pred)})
 
         print(f'{epoch}/{num_epochs}, valid loss : {val_loss:.4f}, train loss'
               f' {tr_loss:.4f}, dry day prob {dd_pred:.4f}, expected {dd_target:.4f}')
 
-        make_qq(preds, targets, epoch)
+        make_qq(preds, targets, epoch, log)
 
+        if epoch > 2 and val_loss < best_loss:
+            best_loss = val_loss
+            wandb.log_artifact( str(param_path), name='params_' + str(epoch).zfill(3), type='training_weights') 
+
+def get_model():
+    return BernoulliSPG(gamma_mix(4), min_pr=0.1)
 
 if __name__ == '__main__':
-    model = BernoulliSPG(gamma_mix(4), min_pr=0.1)
+    model = get_model()
+    
     data = data_utils.load_data_hourly()
     logging=True
 
@@ -294,11 +327,10 @@ if __name__ == '__main__':
     print(f'Num features {num_feat}')
 
     train(model, num_feat, logger, tr_loader, val_loader)
-
     # rng = random.PRNGKey(42)
     # y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0]).astype(jnp.float32)
     # x = y[:, None]
 
     # variables = model.init(random.PRNGKey(0), x, rng)
-
+    
     # probs = model.apply(variables, x, y, method=model.log_prob)
