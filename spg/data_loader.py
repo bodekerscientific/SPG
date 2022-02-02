@@ -66,6 +66,10 @@ def jax_batch(batch):
     y = jnp.stack([b[1] for b in batch]).astype(jnp.float32)
     return x,y
 
+def get_scale(data, num_valid=10000):
+    return data[0:-num_valid].values.std()
+
+
 def get_data_loaders(data, bs=128, num_valid=10000, ds_cls=PrecipitationDataset, **kwargs):
     data_train = data[0:-num_valid]
     data_valid = data[-num_valid:]

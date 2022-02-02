@@ -173,50 +173,55 @@ def run_spg_mlp(data : pd.Series, params_path : Path, feat_samples = 6*24, spin_
     
     # Find the first index where we get non nan values
     idx_valid = np.where(~np.isnan(pr_re.rolling(feat_samples+1).mean().values))[0][0]
-    output = pd.Series(np.zeros(len(dts)), index=dts, dtype=np.float32)
+    output = pd.Series(np.zeros(len(dts), dtype=np.float32), index=dts)
 
-    # Copy of the initial values from the obs
+    # Copy of the initial values for
     output.iloc[0:feat_samples] = pr_re[idx_valid-feat_samples+1:idx_valid+1].values 
 
     @jax.jit
     def sample_func(x, rng):
         return model.apply(params, x, rng, method=model.sample)
 
+    idx = 0
     for n in tqdm(range(feat_samples, len(output))):
         subset_cond = output.iloc[n - feat_samples:n+1]
         x, y = data_loader.generate_features(subset_cond)
+
+        assert len(x) == 1
+        assert y == 0
         
+        x = x[0]
+
         rng, sample_rng = random.split(rng)
-        output.iloc[n] = sample_func(x[0], sample_rng)
+        x_next = sample_func(x, sample_rng)
+        output.iloc[n] = x_next
 
-    # Remove the real data and spin up period from the output
-    return output.iloc[spin_up_hours:]
+    # Remove the real data from the output
+    output = output.iloc[spin_up_hours:]
 
-def make_nc_tprime(data, path):
+    return output
+    
+def save_nc_tprime(data, output_path):
     df_magic = data_utils.load_magic()
     t_prime = data_utils.get_tprime_for_times(data.index, df_magic['ssp245'])
-    data_utils.make_nc(data, path, tprime=t_prime)
+    data_utils.make_nc(data, output_path, tprime=t_prime)
 
 if __name__ == '__main__':
-    # fpath = "/mnt/temp/projects/emergence/data_keep/station_data/dunedin_btl_gardens_precip.tsv"
     
     fname_obs = 'dunedin.nc'
-    save_obs = True
-
-    # fname_ens = fname_obs.replace('.nc', '_001.nc')
     version = 'v3'
     output_path = Path('/mnt/temp/projects/otago_uni_marsden/data_keep/spg/')
+    save_obs = True
     
     output_path_obs = output_path / 'station_data_hourly' 
     output_path_ens = output_path / 'ensemble_hourly' / version
     output_path_ens.mkdir(exist_ok=True, parents=True)
-    
+
     data = data_utils.load_data_hourly()
     if save_obs:
-        make_nc_tprime(data, output_path_obs / fname_obs)
+        save_nc_tprime(data, output_path_obs / fname_obs)
 
-    _,_, scale = data_loader.get_data_loaders(data)
-
+    scale = data_loader.get_scale(data)
+    
     preds = run_spg_mlp(data/scale, 'params_069.data')*scale
-    make_nc_tprime(preds, output_path_ens / fname_obs)
-
+    save_nc_tprime(data, output_path_ens / fname_obs)
