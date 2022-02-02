@@ -87,7 +87,7 @@ class BernoulliSPG(nn.Module):
 
         return jax.lax.cond(
             p_rain <= p_d,
-            lambda: 0.0,
+            lambda: jnp.zeros(1, dtype=x.dtype)[0],
             lambda: self.dist.ppf(dist_params, p_dist)
         )
 
@@ -216,7 +216,7 @@ def get_opt(params, max_lr):
     #                   optax.add_decayed_weights(weight_decay=0.1),
     #                   optax.scale_by_schedule(sched))
     opt = optax.adamw(sched, weight_decay=0.1)
-    opt = optax.apply_if_finite(opt, 3)
+    opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
     opt = optax.lookahead(opt, 5, 0.5)
     opt_state = opt.init(params)

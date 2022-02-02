@@ -1,8 +1,10 @@
+from functools import lru_cache
 import pandas as pd
 import xarray as xr
 from bslibs.ncutils import get_attributes
 from pathlib import Path
 
+@lru_cache
 def load_magic(target_path='data/magic_tprime_sh_land.csv'):
     return pd.read_csv(target_path, parse_dates=['date'], index_col='date')
 

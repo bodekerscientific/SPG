@@ -13,6 +13,11 @@ from pathlib import Path
 from itertools import product
 import numpy as np
 
+import data_loader
+import spg_dist
+import flax
+from tqdm import tqdm
+import jax
 
 N_CPU = 20
 
@@ -127,7 +132,7 @@ def gen_save(arg, data, sp, df_magic, output_path, **kwargs):
 def run_non_stationary(output_path, data, scenario=['rcp26','rcp45','rcp60','rcp85','ssp119','ssp126',
                                                     'ssp245','ssp370','ssp434','ssp460','ssp585'], num_ens=1,
                                                     **kwargs):
-
+    
     df_magic = data_utils.load_magic()
     t_prime = data_utils.get_tprime_for_times(data.index, df_magic['ssp245'])
     sp = fit_spg_ns(data, t_prime)
@@ -146,24 +151,72 @@ def test_fit(data, **kwargs):
     preds = gen_preds(sp, data, start_date='1950-1-1', end_date='1980-1-1', **kwargs)
     print(preds)
 
+def load_params(model, path, num_feat=17): 
+    x = jnp.zeros((num_feat,), dtype=jnp.float32)
+    params = model.init(random.PRNGKey(0), x, random.PRNGKey(42))
+
+    with open(path, 'rb') as f:
+        params = flax.serialization.from_bytes(params, f.read())
+
+    return params
+
+def run_spg_mlp(data : pd.Series, params_path : Path, feat_samples = 6*24, spin_up_hours=1000):
+    # Number of samples required for feature calculation
+    
+    rng = random.PRNGKey(np.random.randint(1e10))
+    
+    model = spg_dist.get_model()
+    params = load_params(model, params_path)
+    
+    pr_re = data.resample('H').asfreq()
+    dts = pd.date_range(start=pr_re.index.min() - pd.Timedelta(hours=spin_up_hours), end=pr_re.index.max(), freq='H')
+    
+    # Find the first index where we get non nan values
+    idx_valid = np.where(~np.isnan(pr_re.rolling(feat_samples+1).mean().values))[0][0]
+    output = pd.Series(np.zeros(len(dts)), index=dts, dtype=np.float32)
+
+    # Copy of the initial values from the obs
+    output.iloc[0:feat_samples] = pr_re[idx_valid-feat_samples+1:idx_valid+1].values 
+
+    @jax.jit
+    def sample_func(x, rng):
+        return model.apply(params, x, rng, method=model.sample)
+
+    for n in tqdm(range(feat_samples, len(output))):
+        subset_cond = output.iloc[n - feat_samples:n+1]
+        x, y = data_loader.generate_features(subset_cond)
+        
+        rng, sample_rng = random.split(rng)
+        output.iloc[n] = sample_func(x[0], sample_rng)
+
+    # Remove the real data and spin up period from the output
+    return output.iloc[spin_up_hours:]
+
+def make_nc_tprime(data, path):
+    df_magic = data_utils.load_magic()
+    t_prime = data_utils.get_tprime_for_times(data.index, df_magic['ssp245'])
+    data_utils.make_nc(data, path, tprime=t_prime)
 
 if __name__ == '__main__':
     # fpath = "/mnt/temp/projects/emergence/data_keep/station_data/dunedin_btl_gardens_precip.tsv"
+    
     fname_obs = 'dunedin.nc'
+    save_obs = True
+
     # fname_ens = fname_obs.replace('.nc', '_001.nc')
-    
+    version = 'v3'
     output_path = Path('/mnt/temp/projects/otago_uni_marsden/data_keep/spg/')
-    output_path_obs = output_path / 'station_data_hourly'
-    output_path_ens = output_path / 'ensemble_hourly'
-
-    data = data_utils.load_data_hourly()
-    # run_non_stationary(output_path_ens, data, freq='H')
-    #test_fit(data, plot_path=output_path_ens)
-    data_utils.make_nc(data, output_path_obs / 'dunedin.nc')
     
-    spg_tf = fit_spg(data, use_tf=True)
-    #spg_ss = fit_spg(data, use_tf=False)
-    preds = gen_preds(spg_tf, data, plot_path=output_path_ens / 'qq_dunedin.png')
+    output_path_obs = output_path / 'station_data_hourly' 
+    output_path_ens = output_path / 'ensemble_hourly' / version
+    output_path_ens.mkdir(exist_ok=True, parents=True)
+    
+    data = data_utils.load_data_hourly()
+    if save_obs:
+        make_nc_tprime(data, output_path_obs / fname_obs)
 
-    predictions = pd.Series(preds, index=data.index)
-    data_utils.make_nc(predictions, output_path_ens / fname_obs)
+    _,_, scale = data_loader.get_data_loaders(data)
+
+    preds = run_spg_mlp(data/scale, 'params_069.data')*scale
+    make_nc_tprime(preds, output_path_ens / fname_obs)
+
