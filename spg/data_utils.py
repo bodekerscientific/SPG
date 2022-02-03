@@ -14,11 +14,11 @@ def get_tprime_for_times(dates, tprime_df):
     temp = pd.Series(tprime_df.values, index=tprime_df.index.year)
     return temp.loc[years].values
 
-def make_nc(data, output_path, tprime=None):
+def make_nc(data, output_path, tprime=None, units='mm/day'):
     da = xr.DataArray.from_series(data)
     da.name = 'precipitation'
-    da.attrs['units'] = 'mm/day'
-    if 'index' in da:
+    da.attrs['units'] = units
+    if 'index' in da.dims:
         da = da.rename({'index': 'time'})
 
     ds = xr.Dataset()

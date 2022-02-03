@@ -1,3 +1,12 @@
+"""
+    Evaluates the SPG and generates ensambles
+
+    @Author Leroy Bird
+    
+    You might need to set, as TF and JAX will both try grab the full gpu memory.
+        export XLA_PYTHON_CLIENT_PREALLOCATE=false
+
+"""
 from bslibs.plot.qqplot import qqplot
 
 import pandas as pd
@@ -5,16 +14,14 @@ import jax.numpy as jnp
 from jax import random
 import matplotlib.pyplot as plt
 from functools import partial
-from pathos.multiprocessing import ProcessingPool as Pool
+from multiprocessing import get_context
 
 from spg.generator import SPG
-from spg import distributions, jax_utils, data_utils, generator
+from spg import distributions, jax_utils, data_utils, generator, data_loader, spg_dist
 from pathlib import Path
 from itertools import product
 import numpy as np
 
-import data_loader
-import spg_dist
 import flax
 from tqdm import tqdm
 import jax
@@ -130,9 +137,8 @@ def gen_save(arg, data, sp, df_magic, output_path, **kwargs):
     data_utils.make_nc(predictions, output_path / f'dunedin_{sce}_{str(ens_num).zfill(3)}.nc', tprime=df_magic[sce])
 
 def run_non_stationary(output_path, data, scenario=['rcp26','rcp45','rcp60','rcp85','ssp119','ssp126',
-                                                    'ssp245','ssp370','ssp434','ssp460','ssp585'], num_ens=1,
+                                                    'ssp245','ssp370','ssp434','ssp460','ssp585'], num_ens=4,
                                                     **kwargs):
-    
     df_magic = data_utils.load_magic()
     t_prime = data_utils.get_tprime_for_times(data.index, df_magic['ssp245'])
     sp = fit_spg_ns(data, t_prime)
@@ -143,7 +149,7 @@ def run_non_stationary(output_path, data, scenario=['rcp26','rcp45','rcp60','rcp
 
     print(f'Running {len(ens)} scenarios')
 
-    with Pool(N_CPU) as p:
+    with get_context('spawn').Pool(N_CPU) as p:
         p.map(partial(gen_save, data=data, sp=sp, df_magic=df_magic, output_path=output_path, **kwargs), ens)
 
 def test_fit(data, **kwargs):
@@ -159,56 +165,89 @@ def load_params(model, path, num_feat=17):
         params = flax.serialization.from_bytes(params, f.read())
 
     return params
-
-def run_spg_mlp(data : pd.Series, params_path : Path, feat_samples = 6*24, spin_up_hours=1000):
-    # Number of samples required for feature calculation
-    
-    rng = random.PRNGKey(np.random.randint(1e10))
-    
-    model = spg_dist.get_model()
-    params = load_params(model, params_path)
-    
-    pr_re = data.resample('H').asfreq()
-    dts = pd.date_range(start=pr_re.index.min() - pd.Timedelta(hours=spin_up_hours), end=pr_re.index.max(), freq='H')
+ 
+def setup_output(data, feat_samples, start_date, end_date, spin_up_hours=1000, freq='H'):
+    pr_re = data.resample(freq).asfreq()
+    dts = pd.date_range(start=start_date - pd.Timedelta(hours=spin_up_hours), end=end_date, freq=freq)
     
     # Find the first index where we get non nan values
     idx_valid = np.where(~np.isnan(pr_re.rolling(feat_samples+1).mean().values))[0][0]
     output = pd.Series(np.zeros(len(dts), dtype=np.float32), index=dts)
+    output.index.name = 'time'
 
-    # Copy of the initial values for
+    # Copy of the initial values from the obs
     output.iloc[0:feat_samples] = pr_re[idx_valid-feat_samples+1:idx_valid+1].values 
+    return output
+
+def run_spg_mlp(data : pd.Series, params_path : Path, feat_samples = 6*24, spin_up_hours=1000, 
+                start_date=None, end_date=None, rng=None, sce='ssp245', use_tqdm=True):
+    if rng is None:
+        rng = random.PRNGKey(np.random.randint(1e10))
+    
+    model = spg_dist.get_model()
+    params = load_params(model, params_path)
+
+    if start_date is None:
+        start_date = data.index.min()
+    if end_date is None:
+        end_date = data.index.max()
+    
+    output = setup_output(data, feat_samples, start_date, end_date, spin_up_hours=spin_up_hours)
 
     @jax.jit
     def sample_func(x, rng):
         return model.apply(params, x, rng, method=model.sample)
 
-    idx = 0
-    for n in tqdm(range(feat_samples, len(output))):
+    n_range = range(feat_samples, len(output))
+    if use_tqdm:
+        n_range = tqdm(n_range)
+
+    for n in n_range:
         subset_cond = output.iloc[n - feat_samples:n+1]
-        x, y = data_loader.generate_features(subset_cond)
-
-        assert len(x) == 1
-        assert y == 0
+        x, y = data_loader.generate_features(subset_cond, sce=sce)
         
-        x = x[0]
+        # Sometimes (very rarely) we get an np.nan
+        # So just repeat until we get a valid output
+        out = jnp.nan
+        while(not jnp.isfinite(out)):
+            rng, sample_rng = random.split(rng)
+            out = sample_func(x[0], sample_rng)
+        output.iloc[n] = out
 
-        rng, sample_rng = random.split(rng)
-        x_next = sample_func(x, sample_rng)
-        output.iloc[n] = x_next
-
-    # Remove the real data from the output
-    output = output.iloc[spin_up_hours:]
-
-    return output
+    # Remove the real data and spin up period from the output
+    return output.iloc[spin_up_hours:]
     
-def save_nc_tprime(data, output_path):
+def save_nc_tprime(data, output_path,  units='mm/hr', sce='ssp245'):
     df_magic = data_utils.load_magic()
-    t_prime = data_utils.get_tprime_for_times(data.index, df_magic['ssp245'])
-    data_utils.make_nc(data, output_path, tprime=t_prime)
+    t_prime = data_utils.get_tprime_for_times(data.index, df_magic[sce])
+    print(f'Saving file {output_path}')
+    data_utils.make_nc(data, output_path, tprime=t_prime, units=units)
+
+def run_save_proj(ens_args, output_folder, file_pre, data : pd.Series, scale, params_path : Path, 
+                  start_date=pd.Timestamp(1950, 1, 1), end_date=pd.Timestamp(2100, 1, 1), **kwargs):
+
+    sce, ens_num, idx = ens_args
+    rng = random.PRNGKey(seed=971*(int(idx)+42))
+    preds = run_spg_mlp(data/scale, params_path, start_date=start_date, end_date=end_date, rng=rng, **kwargs)*scale
+
+    output_path = output_folder / f'{file_pre}_{sce}_{str(ens_num).zfill(3)}.nc'    
+    print(f'Saving to {output_path}')
+    save_nc_tprime(preds, output_path, sce=sce)
+
+def run_pool(scenarios=['rcp26','rcp45','rcp60','rcp85','ssp119','ssp126',
+                        'ssp245','ssp370','ssp434','ssp460','ssp585'], num_ens=5, **kwargs):
+
+    ens = list(product(scenarios, np.arange(num_ens) + 1))
+    idxs = np.arange(len(ens)) 
+    ens = np.concatenate([np.array(ens), idxs[:, None]], axis=1)
+
+    print(f'Running {len(ens)} scenarios')
+
+    with get_context('spawn').Pool(N_CPU) as p:
+        p.map(partial(run_save_proj, use_tqdm=False, **kwargs), ens)
 
 if __name__ == '__main__':
-    
-    fname_obs = 'dunedin.nc'
+    fname_obs = 'dunedin'
     version = 'v3'
     output_path = Path('/mnt/temp/projects/otago_uni_marsden/data_keep/spg/')
     save_obs = True
@@ -217,11 +256,12 @@ if __name__ == '__main__':
     output_path_ens = output_path / 'ensemble_hourly' / version
     output_path_ens.mkdir(exist_ok=True, parents=True)
 
-    data = data_utils.load_data_hourly()
+    data = data_utils.load_data_hourly()#'/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/1962.nc')
     if save_obs:
-        save_nc_tprime(data, output_path_obs / fname_obs)
+        save_nc_tprime(data, output_path_obs / (fname_obs + '.nc'))
 
     scale = data_loader.get_scale(data)
-    
-    preds = run_spg_mlp(data/scale, 'params_069.data')*scale
-    save_nc_tprime(data, output_path_ens / fname_obs)
+    run_pool(output_folder=output_path_ens, file_pre=fname_obs, data=data, scale=scale, params_path='params_069.data')
+
+    # preds = run_spg_mlp(data/scale, 'params_069.data')*scale
+    # save_nc_tprime(preds, output_path_ens / (fname_obs + '.nc'))

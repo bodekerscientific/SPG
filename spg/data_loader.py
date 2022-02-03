@@ -7,7 +7,7 @@ import jax
 from spg import data_utils
 from bslibs.regression.datetime_utils import datetimes_to_dec_year
 
-def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], inc_doy=True, inc_tod=True, inc_tprime=True, rd_thresh=0.1):
+def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], inc_doy=True, inc_tod=True, inc_tprime=True, rd_thresh=0.1, sce='ssp245'):
     features = []
     # Select y, and remove the last day as there would be no label        
     y = pr[1:]
@@ -36,7 +36,7 @@ def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], 
     
     if inc_tprime:
         df_magic = data_utils.load_magic()
-        features.append(data_utils.get_tprime_for_times(dts, df_magic['ssp245']))
+        features.append(data_utils.get_tprime_for_times(dts, df_magic[sce]))
 
     x = np.stack(np.stack(features), axis=1).astype(np.float32)
 
