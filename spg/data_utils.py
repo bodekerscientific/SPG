@@ -50,16 +50,22 @@ def load_data_hourly(fpath="/mnt/datasets/NationalClimateDatabase/NetCDFFilesByV
     return ds['precipitation'].to_series()
 
 def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/dunedin/', 
-            batches= ['batch_870_ant', 'batch_871_ant', 'batch_872_ant'], num_ens=400 ):
-    
-    out = defaultdict(list)
+            batches= ['batch_870_ant', 'batch_871_ant', 'batch_872_ant'], num_ens=400, spin_up_days=8,
+            mult_factor=1.75):
+
+    batches_tprime = {'batch_870_ant' : 1.5, 'batch_871_ant' : 2.0, 'batch_872_ant' : 3.0}
+
+    out = []
     for batch in batches:
-        files = list((batches / batch).glob('*.nc'))[0:num_ens]
+        files = list((Path(base_path) / batch).glob('*.nc'))[0:num_ens]
         for f in files:
             with xr.open_dataset(f) as ds:
                 if len(ds['time1']) == 600:
-                    ds = ds.isel(time1=slice(600-360, 600), z0=0)
-                    out[batch].append((ds['precipitation'].values*24*60*60, ds['time1'].values))
+                    ds = ds.isel(time1=slice(600-360-spin_up_days, 600), z0=0)
+                    df = pd.DataFrame({'pr' : ds['precipitation'].values*24*60*60*mult_factor, 'dts' : ds['time1'].values,
+                                       'tp'  :  batches_tprime[batch]})
+                    out.append(df)
+    
     return out
 
 if __name__ == '__main__':
