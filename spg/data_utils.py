@@ -1,3 +1,4 @@
+from collections import defaultdict
 from functools import lru_cache
 import pandas as pd
 import xarray as xr
@@ -47,6 +48,19 @@ def load_data_hourly(fpath="/mnt/datasets/NationalClimateDatabase/NetCDFFilesByV
     # Select only the hourly values
     ds = ds.sel(time=ds.period.values == 1)
     return ds['precipitation'].to_series()
+
+def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/dunedin/', 
+            batches= ['batch_870_ant', 'batch_871_ant', 'batch_872_ant'], num_ens=400 ):
+    
+    out = defaultdict(list)
+    for batch in batches:
+        files = list((batches / batch).glob('*.nc'))[0:num_ens]
+        for f in files:
+            with xr.open_dataset(f) as ds:
+                if len(ds['time1']) == 600:
+                    ds = ds.isel(time1=slice(600-360, 600), z0=0)
+                    out[batch].append((ds['precipitation'].values*24*60*60, ds['time1'].values))
+    return out
 
 if __name__ == '__main__':
     load_data_hourly()

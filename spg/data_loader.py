@@ -7,6 +7,57 @@ import jax
 from spg import data_utils
 from bslibs.regression.datetime_utils import datetimes_to_dec_year
 
+
+
+def generate_features_daily(pr : pd.Series, average_days=[1, 2, 4, 8], inc_doy=True, inc_tprime=True, rd_thresh=0.1, sce='ssp245', is_wh=False):
+    features = []
+    # Select y, and remove the last day as there would be no label        
+    
+    y = pr[1:]
+
+    if is_wh:
+        dts = y['dts'].values
+        y = y['pr'].values
+        pr = pr['pr']
+        tp = y['tp']
+    else:
+        dts = y.index
+        pr = pr
+
+    pr = pr[:-1]
+    pr_re_rd = (pr > rd_thresh).astype(np.float32)
+
+    # Decimal day of the year
+    if inc_doy:
+        if is_wh:
+            pass
+        else:
+            # Mod 1 as we only want the fraction
+            if inc_doy:
+                doy_frac = datetimes_to_dec_year(dts) % 1.0 
+            
+        # Use cos and sin doy to remove the jump at the start of a year
+        features.extend([np.cos(2*np.pi*doy_frac), np.sin(2*np.pi*doy_frac)])
+    
+    for av_hr in average_days:
+        features.append(pr.rolling(av_hr).mean().values) 
+        features.append(pr_re_rd.rolling(av_hr).mean().values)
+    
+    if inc_tprime:
+        if is_wh:
+            features.append(tp)
+        else:
+            df_magic = data_utils.load_magic()
+            features.append(data_utils.get_tprime_for_times(dts, df_magic[sce]))
+
+    x = np.stack(features, axis=1).astype(np.float32)
+
+    # Remove all the nans        
+    mask = ~(np.isnan(x).any(axis=1) | np.isnan(y))
+
+    return x[mask, :], y[mask]
+ 
+
 def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], inc_doy=True, inc_tod=True, inc_tprime=True, rd_thresh=0.1, sce='ssp245'):
     features = []
     # Select y, and remove the last day as there would be no label        
@@ -45,20 +96,34 @@ def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], 
 
     return x[mask, :], y[mask]
 
+def calculate_stats(x, y):
+    x_stats = {'mean' : np.mean(x, axis=0), 'std' : np.std(x, axis=0)}
+    y_stats = {'mean' : 0, 'std' : np.std(y, axis=0)}
+    return {'x' : x_stats, 'y' : y_stats}
+
+
 class PrecipitationDataset(Dataset):
-    def __init__(self, pr : pd.Series, freq='H'):
+    def __init__(self, pr : pd.Series, stats=None, freq='H'):
         pr_re = pr.resample(freq).asfreq()
         print(f' {(pr_re.isna().sum() / pr_re.size)*100:.2f}% of the values are missing.')
         
         self.X, self.Y = generate_features(pr_re, )
         print(f'{(len(self.Y)/len(pr_re))*100:.2f}% of the values are valid after taking calculating the averages')
 
+        if stats is None:
+            print('Calculating stats')
+            stats = calculate_stats(self.X, self.Y)
+        self.stats = stats
+
+        
+    def apply_stats(self, data, key='x'):
+        return (data - self.stats[key])/self.stats[key]
 
     def __len__(self):
         return len(self.Y)
 
     def __getitem__(self, index):
-        return self.X[index], self.Y[index] 
+        return self.apply_stats(self.X[index]), self.apply_stats(self.Y[index]) 
 
 @jax.jit
 def jax_batch(batch):
@@ -69,17 +134,16 @@ def jax_batch(batch):
 def get_scale(data, num_valid=10000):
     return data[0:-num_valid].values.std()
 
-
-def get_data_loaders(data, bs=128, num_valid=10000, ds_cls=PrecipitationDataset, **kwargs):
+def get_datasets(data, num_valid=10000,  **kwargs):
     data_train = data[0:-num_valid]
     data_valid = data[-num_valid:]
 
-    scale = data_train.values.std()
-    print(f'Scale: {scale :.3f}')
+    train_ds = PrecipitationDataset(data_train, **kwargs)
+    valid_ds = PrecipitationDataset(data_valid, stats=train_ds.stats, **kwargs)
+    return train_ds, valid_ds
 
-    train_ds = ds_cls(data_train/scale, **kwargs)
-
+def get_data_loaders(train_ds, valid_ds, bs=128, num_valid=10000, ds_cls=PrecipitationDataset, **kwargs):
     train_dataloader = DataLoader(train_ds, batch_size=bs, shuffle=True, collate_fn=jax_batch, **kwargs)
-    valid_dataloader = DataLoader(ds_cls(data_valid/scale, **kwargs), batch_size=bs, shuffle=False, collate_fn=jax_batch, **kwargs)
+    valid_dataloader = DataLoader(valid_ds, batch_size=bs, shuffle=False, collate_fn=jax_batch, **kwargs)
 
-    return train_dataloader, valid_dataloader, len(train_ds[0][0])
+    return train_dataloader, valid_dataloader
