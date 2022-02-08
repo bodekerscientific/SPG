@@ -127,7 +127,7 @@ class PrecipitationDataset(Dataset):
         return len(self.Y)
 
     def __getitem__(self, index):
-        return self.apply_stats(self.X[index]), self.apply_stats(self.Y[index]) 
+        return self.apply_stats(self.X[index]), self.apply_stats(self.Y[index], key='y') 
 
 
 class PrecipitationDatasetWH(PrecipitationDataset):
@@ -182,7 +182,7 @@ def get_datasets(data, num_valid=10000, is_wh=False, **kwargs):
     
     return train_ds, valid_ds
 
-def get_data_loaders(train_ds, valid_ds, bs=128, num_valid=10000, ds_cls=PrecipitationDataset, **kwargs):
+def get_data_loaders(train_ds, valid_ds, bs=128, **kwargs):
     train_dataloader = DataLoader(train_ds, batch_size=bs, shuffle=True, collate_fn=jax_batch, **kwargs)
     valid_dataloader = DataLoader(valid_ds, batch_size=bs, shuffle=False, collate_fn=jax_batch, **kwargs)
 
