@@ -126,8 +126,15 @@ class Dist():
         return self.dist(*params).quantile(prob)
 
 
-Gamma = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(
-    p+1.0), tfp_dist=tfd.Gamma)
+Gamma = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(p),  tfp_dist=tfd.Gamma)
+
+Weibull = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(p), tfp_dist=tfd.Weibull)
+
+def gen_parto_func(params):
+    return jnp.asarray([0.0, jax_utils.pos_only(params[0]), jax_utils.pos_only(params[1])]) 
+
+GenPareto = partial(Dist, num_params=2, param_func=gen_parto_func, tfp_dist=tfd.GeneralizedPareto) 
+
 
 
 class MixtureModel():
@@ -187,10 +194,6 @@ class MixtureModel():
         return jnp.log(prob + eps)
 
 
-def gamma_mix(num_dists=2):
-    return MixtureModel(dists=[Gamma() for _ in range(num_dists)])
-
-
 def make_qq(preds: list, targets: list, epoch: int, log, output_folder='./results/plots'):
     plt.figure(figsize=(12, 8))
     qqplot(np.array(targets), np.array(preds), num_highlighted_quantiles=10, linewidth=0)
@@ -211,11 +214,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
 
 def get_opt(params, max_lr):
     sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 2000, 40000, 1e-5)
-    # opt = optax.chain(optax.adaptive_grad_clip(0.5),
-    #                   optax.scale_by_radam(),
-    #                   optax.add_decayed_weights(weight_decay=0.1),
-    #                   optax.scale_by_schedule(sched))
-    opt = optax.adamw(sched, weight_decay=0.1)
+    opt = optax.adamw(sched, weight_decay=0.03)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
     opt = optax.lookahead(opt, 5, 0.5)
@@ -307,13 +306,24 @@ def train(model, num_feat, log, tr_loader, valid_loader, max_lr=1e-3, num_epochs
             best_loss = val_loss
             wandb.log_artifact( str(param_path), name='params_' + str(epoch).zfill(3), type='training_weights') 
 
+
+def gamma_mix(num_dists=2):
+    return MixtureModel(dists=[Gamma() for _ in range(num_dists)])
+
+# 
+# def get_model():
+#     return BernoulliSPG(dist=MixtureModel(dists=[Gamma(), GenPareto(), GenPareto()]))
+
+
+
 def get_model():
-    return BernoulliSPG(gamma_mix(4), min_pr=0.1)
+    return BernoulliSPG(dist=MixtureModel(dists=[Gamma(), GenPareto(), GenPareto()]))
+
 
 if __name__ == '__main__':
     model = get_model()
     
-    data = data_utils.load_data_hourly()
+    data = data_utils.load_data_hourly()#'/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/1962.nc'
     logging=True
 
     if logging:
@@ -327,6 +337,7 @@ if __name__ == '__main__':
     print(f'Num features {num_feat}')
 
     train(model, num_feat, logger, tr_loader, val_loader)
+
     # rng = random.PRNGKey(42)
     # y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0]).astype(jnp.float32)
     # x = y[:, None]
