@@ -4,6 +4,7 @@ import pandas as pd
 import xarray as xr
 from bslibs.ncutils import get_attributes
 from pathlib import Path
+import random
 
 @lru_cache
 def load_magic(target_path='data/magic_tprime_sh_land.csv'):
@@ -55,17 +56,26 @@ def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at
 
     batches_tprime = {'batch_870_ant' : 1.5, 'batch_871_ant' : 2.0, 'batch_872_ant' : 3.0}
 
+    random.seed(42)
+
     out = []
     for batch in batches:
-        files = list((Path(base_path) / batch).glob('*.nc'))[0:num_ens]
+        files = list((Path(base_path) / batch).glob('*.nc'))
+        random.shuffle(files)
+        count = 0
         for f in files:
+            
             with xr.open_dataset(f) as ds:
                 if len(ds['time1']) == 600:
                     ds = ds.isel(time1=slice(600-360-spin_up_days, 600), z0=0)
                     df = pd.DataFrame({'pr' : ds['precipitation'].values*24*60*60*mult_factor, 'dts' : ds['time1'].values,
                                        'tp'  :  batches_tprime[batch]})
                     out.append(df)
-    
+                    count += 1
+           
+            if count == num_ens:
+                break
+
     return out
 
 if __name__ == '__main__':

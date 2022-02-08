@@ -87,24 +87,18 @@ def test_simple_spg(data = load_data()):
 
 
 def test_spg_dist():
-
-    class test_test():
-        def log_prob(self, params, x, v):
-            return v*1.1
-
-        def ppf(self, params, x, p):
-            return 0.1*p
     
-    model = spg_dist.BernoulliSPG(test_test(), min_pr=0.1)
+    model = spg_dist.BernoulliSPG(spg_dist.Gamma(), min_pr=0.1)
 
     rng = random.PRNGKey(42)
-    y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0])
-    x = y[:, None]
+    y = jnp.array([1.0])
+    x = []
 
     variables = model.init(random.PRNGKey(0), x, rng)
     probs = model.apply(variables, x, y, method=model.log_prob)
     
     assert probs.shape[0] == x.shape[0]
+    
 
 if __name__ == '__main__':
     from spg import data_utils

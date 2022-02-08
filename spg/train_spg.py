@@ -7,9 +7,10 @@
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
 
 """
+import os
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = 'false'
 
 from copy import deepcopy
-from math import gamma
 import matplotlib.pyplot as plt
 import matplotlib
 from typing import Iterable, Sequence, Callable
@@ -320,6 +321,19 @@ def get_model():
     return BernoulliSPG(dist=MixtureModel(dists=[Gamma(), GenPareto(), GenPareto()]))
 
 
+def train_wh(**kwargs):
+    print('Loading weather@home')
+    wh_ens = data_utils.load_wh(num_ens=500)
+    print(f'Loaded {len(wh_ens)} ens')
+
+    ds_train, ds_valid = data_loader.get_datasets(wh_ens, num_valid=50, is_wh=True)
+
+    tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
+    num_feat = len(ds_train[0][0])
+    print(f'Num features {num_feat}')
+
+    train(num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
+
 if __name__ == '__main__':
     model = get_model()
     
@@ -333,11 +347,9 @@ if __name__ == '__main__':
         logger = lambda *args : None
 
     bs = 256
-    tr_loader, val_loader, num_feat = data_loader.get_data_loaders(data, bs=bs)
-    print(f'Num features {num_feat}')
 
-    train(model, num_feat, logger, tr_loader, val_loader)
-
+    train_wh(model=model, log=wandb.log)
+    
     # rng = random.PRNGKey(42)
     # y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0]).astype(jnp.float32)
     # x = y[:, None]
