@@ -136,7 +136,34 @@ def gen_parto_func(params):
 
 GenPareto = partial(Dist, num_params=2, param_func=gen_parto_func, tfp_dist=tfd.GeneralizedPareto) 
 
+# class BernoulliDist():
+#     def sample(self, x, rng):
+#         dist_params = self.mlp(x)
 
+#         logit_params, dist_params = self._split_params(dist_params)
+#         p_d, _ = nn.softmax(logit_params)
+
+#         rng, rng_rd = random.split(rng, num=2)
+#         p_rain, p_dist = random.uniform(rng_rd, (2,), dtype=x.dtype)
+
+#         return jax.lax.cond(
+#             p_rain <= p_d,
+#             lambda: jnp.zeros(1, dtype=x.dtype)[0],
+#             lambda: self.dist.ppf(dist_params, p_dist)
+#         )
+
+#     def log_prob(self, x, y):
+
+#         dist_params = self.mlp(x)
+
+#         logit_params, dist_params = self._split_params(dist_params)
+#         p_d, p_r = nn.log_softmax(logit_params)
+
+#         return jax.lax.cond(
+#             y <= self.min_pr,
+#             lambda: p_d,
+#             lambda: p_r + self.dist.log_prob(dist_params, y)
+#         )
 
 class MixtureModel():
     def __init__(self, dists):
@@ -160,7 +187,7 @@ class MixtureModel():
 
     def _get_weightning_params(self, params):
         logit_params, dist_params = self._split_params(params)
-        weightings = nn.softmax(logit_params)
+        weightings = nn.softmax(logit_params*20)
         return weightings, dist_params
 
     def _loop_dist_func(self, params, dist_func: Callable):
@@ -215,7 +242,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
 
 def get_opt(params, max_lr):
     sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 2000, 40000, 1e-5)
-    opt = optax.adamw(sched, weight_decay=0.03)
+    opt = optax.adamw(sched, weight_decay=1e-4)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
     opt = optax.lookahead(opt, 5, 0.5)
@@ -223,11 +250,14 @@ def get_opt(params, max_lr):
 
     return opt, opt_state, params
 
-def train(model, num_feat, log, tr_loader, valid_loader, max_lr=1e-3, num_epochs=100, min_pr=0.1):
+def train(model, num_feat, log, tr_loader, valid_loader, params=None, max_lr=1e-3, num_epochs=100, min_pr=0.1):
     rng = random.PRNGKey(42**2)
     x = jnp.zeros((num_feat,), dtype=jnp.float32)
 
-    params = model.init(random.PRNGKey(0), x, rng)
+    params_init = model.init(random.PRNGKey(0), x, rng)
+    if params is None:
+        params = params_init
+
     opt, opt_state, params = get_opt(params, max_lr)
 
     def loss_func(params, x_b, y_b):
@@ -308,6 +338,17 @@ def train(model, num_feat, log, tr_loader, valid_loader, max_lr=1e-3, num_epochs
             wandb.log_artifact( str(param_path), name='params_' + str(epoch).zfill(3), type='training_weights') 
 
 
+def load_params(model, path, num_feat): 
+    x = jnp.zeros((num_feat,), dtype=jnp.float32)
+    params = model.init(random.PRNGKey(0), x, random.PRNGKey(42))
+
+    print(f'Loading params from {path}...')
+    with open(path, 'rb') as f:
+        params = flax.serialization.from_bytes(params, f.read())
+
+    return params
+
+
 def gamma_mix(num_dists=2):
     return MixtureModel(dists=[Gamma() for _ in range(num_dists)])
 
@@ -318,7 +359,7 @@ def gamma_mix(num_dists=2):
 
 
 def get_model():
-    return BernoulliSPG(dist=MixtureModel(dists=[Gamma(), GenPareto(), GenPareto()]))
+    return BernoulliSPG(dist=MixtureModel(dists=[Weibull(), GenPareto(), GenPareto()]))
 
 
 def train_wh(**kwargs):
@@ -334,10 +375,25 @@ def train_wh(**kwargs):
 
     train(num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
 
+def train_daily(model, load_stats=True, params_path=None, **kwargs):
+    data = data_utils.load_data()
+    
+    ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*4, load_stats=load_stats, is_wh=False, freq='D')
+
+    tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
+    num_feat = len(ds_train[0][0])
+    print(f'Num features {num_feat}')
+
+    if params_path is not None:
+        params = load_params(model, params_path, num_feat)
+    else:
+        params = None
+
+    train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, **kwargs)
+
+
 if __name__ == '__main__':
     model = get_model()
-    
-    data = data_utils.load_data_hourly()#'/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/1962.nc'
     logging=True
 
     if logging:
@@ -348,7 +404,11 @@ if __name__ == '__main__':
 
     bs = 256
 
-    train_wh(model=model, log=wandb.log)
+    params_path = 'params_wh.data'
+
+    train_daily(model=model, log=wandb.log, params_path=params_path)
+    #train_wh(model=model, log
+    # =wandb.log)
     
     # rng = random.PRNGKey(42)
     # y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0]).astype(jnp.float32)

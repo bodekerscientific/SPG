@@ -3,10 +3,11 @@ import pandas as pd
 import numpy as np
 import jax.numpy as jnp
 import jax
+import json
+from functools import partial
 
 from spg import data_utils
 from bslibs.regression.datetime_utils import datetimes_to_dec_year
-
 
 def dt_360_to_dec_year(dts):
     return np.array([dt.year + ((dt.month-1)*30 + dt.day)/360.0 for dt in dts])
@@ -65,7 +66,7 @@ def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], 
     # Select y, and remove the last day as there would be no label        
     y = pr[1:]
     dts = y.index
-    y = y.values
+    y = y.values.astype(np.float32)
 
     pr = pr[:-1]
     pr_re_rd = (pr > rd_thresh).astype(np.float32)
@@ -100,16 +101,36 @@ def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], 
 
 def calculate_stats(x, y):
     x_stats = {'mean' : np.mean(x, axis=0), 'std' : np.std(x, axis=0)}
-    y_stats = {'mean' : 0, 'std' : np.std(y, axis=0)}
+    y_stats = {'mean' : np.array(0.0, dtype=np.float32), 'std' : np.std(y, axis=0)}
     return {'x' : x_stats, 'y' : y_stats}
 
 
+def open_stats(stats_path):
+    print(f'Loading stats from {stats_path}')
+    with open(stats_path, 'r') as f:
+        stats = json.loads(f.read())
+
+        # Convert back into a dictionary
+        func_np = partial(np.array, dtype=np.float32)
+        return  {k: {'mean': func_np(v['mean']),
+                    'std': func_np(v['std'])} for k, v in stats.items()}
+
+def save_stats(stats, stats_path):
+    print(f'Saving stats to {stats_path}')
+    with open(stats_path, 'w') as f:
+        # Can't save np array to json so convert to a list first
+        f.write(json.dumps({k: {'mean': v['mean'].tolist(),
+                                'std': v['std'].tolist()} for k, v in stats.items()}, indent=4))
+    return stats
+
 class PrecipitationDataset(Dataset):
     def __init__(self, pr : pd.Series, stats=None, freq='H'):
+        assert freq in ['H', 'D'], 'Only hourly or daily data supported'
+
         pr_re = pr.resample(freq).asfreq()
         print(f' {(pr_re.isna().sum() / pr_re.size)*100:.2f}% of the values are missing.')
         
-        self.X, self.Y = generate_features(pr_re, )
+        self.X, self.Y = generate_features(pr_re,) if freq == 'H' else generate_features_daily(pr_re)
         print(f'{(len(self.Y)/len(pr_re))*100:.2f}% of the values are valid after taking calculating the averages')
 
         if stats is None:
@@ -157,7 +178,7 @@ def jax_batch(batch):
 def get_scale(data, num_valid=10000):
     return data[0:-num_valid].values.std()
 
-def get_datasets(data, num_valid=10000, is_wh=False, **kwargs):
+def get_datasets(data, num_valid=10000, is_wh=False, stats_path='./stats.json', load_stats=False, **kwargs):
 
     if is_wh:
         # for weather@home, we split the dataset by ens for each batch (3 runs in total)
@@ -177,9 +198,17 @@ def get_datasets(data, num_valid=10000, is_wh=False, **kwargs):
 
     ds_cls = PrecipitationDatasetWH if is_wh else PrecipitationDataset
 
-    train_ds = ds_cls(data_train, **kwargs)
+    if load_stats:
+        stats = open_stats(stats_path)
+    else:
+        stats = None
+
+    train_ds = ds_cls(data_train, stats=stats, **kwargs)
     valid_ds = ds_cls(data_valid, stats=train_ds.stats, **kwargs)
     
+    if not load_stats:
+        save_stats(train_ds.stats, stats_path)
+
     return train_ds, valid_ds
 
 def get_data_loaders(train_ds, valid_ds, bs=128, **kwargs):

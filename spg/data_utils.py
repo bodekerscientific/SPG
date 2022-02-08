@@ -42,7 +42,9 @@ def load_data(fpath="/mnt/temp/projects/emergence/data_keep/station_data/dunedin
     df = pd.read_csv(fpath, sep='\t', parse_dates=['Date(UTC)'], skiprows=8)
 
     df['date'] = pd.to_datetime(df['Date(UTC)'].values, format='%Y%m%d:%H%M')
-    return pd.Series(df['Amount(mm)'].values, index=df['date'].values)
+    out = pd.Series(df['Amount(mm)'].values, index=df['date'].values)
+    out.index = out.index.normalize()
+    return out
 
 def load_data_hourly(fpath="/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/5212.nc"):
     ds = xr.open_dataset(fpath)
