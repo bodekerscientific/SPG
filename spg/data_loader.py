@@ -123,6 +123,13 @@ def save_stats(stats, stats_path):
                                 'std': v['std'].tolist()} for k, v in stats.items()}, indent=4))
     return stats
 
+
+def apply_stats(stats, data):
+    return (data - stats['mean'])/stats['std']
+
+def inverse_stats(stats, data):
+    return data*stats['std'] + stats['mean']
+
 class PrecipitationDataset(Dataset):
     def __init__(self, pr : pd.Series, stats=None, freq='H'):
         assert freq in ['H', 'D'], 'Only hourly or daily data supported'
@@ -138,17 +145,17 @@ class PrecipitationDataset(Dataset):
             stats = calculate_stats(self.X, self.Y)
         self.stats = stats
 
-    def inverse_pr_y(self, y, key='y'):
-        return y*self.stats[key]['std'] + self.stats[key]['mean']
+    def inverse_tr(self, y, key='y'):
+        return inverse_stats(y, self.stats[key])
         
-    def apply_stats(self, data, key='x'):
-        return (data - self.stats[key]['mean'])/self.stats[key]['std']
+    def apply_tr(self, data, key='x'):
+        return apply_stats(data, self.stats[key])
 
     def __len__(self):
         return len(self.Y)
 
     def __getitem__(self, index):
-        return self.apply_stats(self.X[index]), self.apply_stats(self.Y[index], key='y') 
+        return self.apply_tr(self.X[index]), self.apply_tr(self.Y[index], key='y') 
 
 
 class PrecipitationDatasetWH(PrecipitationDataset):
