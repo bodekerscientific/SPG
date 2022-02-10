@@ -210,6 +210,8 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, feat_samples
         while(not jnp.isfinite(out)):
             rng, sample_rng = random.split(rng)
             out = sample_func(x[0], sample_rng)
+            if jnp.isnan(out):
+                print('Got invalid value!!')
             # if not jnp.isfinite(out):
             #     id_print(out)
         output.iloc[n] = out
@@ -222,10 +224,6 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, feat_samples
 
     return output
     
-def save_nc_tprime(data, output_path,  units='mm/hr', sce='ssp245'):
-    df_magic = data_utils.load_magic()
-    t_prime = data_utils.get_tprime_for_times(data.index, df_magic[sce])
-    data_utils.make_nc(data, output_path, tprime=t_prime, units=units)
 
 def run_save_proj(ens_args, output_folder, file_pre, data : pd.Series, params_path : Path, 
                   start_date=pd.Timestamp(1980, 1, 1), end_date=pd.Timestamp(2100, 1, 1), freq='H', **kwargs):
@@ -235,7 +233,7 @@ def run_save_proj(ens_args, output_folder, file_pre, data : pd.Series, params_pa
     preds = run_spg_mlp(data, params_path, start_date=start_date, end_date=end_date, rng=rng, freq=freq, **kwargs)
 
     output_path = output_folder / f'{file_pre}_{sce}_{str(ens_num).zfill(3)}.nc'    
-    save_nc_tprime(preds, output_path, sce=sce, units='mm/hr' if freq == 'H' else 'mm/day')
+    data_utils.save_nc_tprime(preds, output_path, sce=sce, units='mm/hr' if freq == 'H' else 'mm/day')
 
 
 def run_pool(scenarios=['rcp26','rcp45','rcp60','rcp85','ssp119','ssp126',
@@ -250,6 +248,7 @@ def run_pool(scenarios=['rcp26','rcp45','rcp60','rcp85','ssp119','ssp126',
     with get_context('spawn').Pool(N_CPU) as p:
         p.map(partial(run_save_proj, use_tqdm=True, **kwargs), ens)
 
+
 def run_hourly():
     fname_obs = 'dunedin'
     version = 'v6'
@@ -261,16 +260,13 @@ def run_hourly():
     output_path_ens.mkdir(exist_ok=True, parents=True)
 
     data = data_utils.load_data_hourly()#'/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/1962.nc')
-    if save_obs:
-        save_nc_tprime(data, output_path_obs / (fname_obs + '.nc'))
 
     param_path = 'params_v6.data'
-
-    stats = data_loader.open_stats('./stats.json')
-    run_pool(output_folder=output_path_ens, file_pre=fname_obs, data=data, stats=stats, params_path=param_path)
+    stats = data_loader.open_stats(f'./stats_hourly_{version}.json')
+    run_pool(output_folder=output_path_ens, file_pre=fname_obs, data=data, stats=stats, params_path=param_path, freq='H', num_ens=10)
 
     preds = run_spg_mlp(data, param_path, stats=stats)
-    save_nc_tprime(preds, output_path_ens / (fname_obs + '.nc'))
+    data_utils.save_nc_tprime(preds, output_path_ens / (fname_obs + '.nc'))
 
 def run_daily():
     fname_obs = 'dunedin'
@@ -284,18 +280,15 @@ def run_daily():
     output_path_ens.mkdir(exist_ok=True, parents=True)
 
     data = data_utils.load_data()#'/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/1962.nc')
-    if save_obs:
-        save_nc_tprime(data, output_path_obs / (fname_obs + '.nc'), units='mm/day')
-
     param_path = f'params_daily_{version}.data'
     stats = data_loader.open_stats('./stats.json')
     
     run_kwargs = dict(data=data, stats=stats, params_path=param_path, feat_samples=feat_samples, freq='D')
     
     preds = run_spg_mlp(**run_kwargs)
-    save_nc_tprime(preds, output_path_ens / (fname_obs + '.nc'), units='mm/day')
+    data_utils.save_nc_tprime(preds, output_path_ens / (fname_obs + '.nc'), units='mm/day')
     
     run_pool(output_folder=output_path_ens, file_pre=fname_obs, **run_kwargs)
 
 if __name__ == '__main__':
-    run_daily()
+    run_hourly()

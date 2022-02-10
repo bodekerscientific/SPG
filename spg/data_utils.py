@@ -19,6 +19,10 @@ def get_tprime_for_years(years, tprime_df):
     temp = pd.Series(tprime_df.values, index=tprime_df.index.year)
     return temp.loc[years].values
 
+def save_nc_tprime(data, output_path,  units='mm/hr', sce='ssp245'):
+    df_magic = load_magic()
+    t_prime = get_tprime_for_times(data.index, df_magic[sce])
+    make_nc(data, output_path, tprime=t_prime, units=units)
 
 def make_nc(data, output_path, tprime=None, units='mm/day'):
     da = xr.DataArray.from_series(data)
@@ -50,10 +54,8 @@ def load_data(fpath="/mnt/temp/projects/emergence/data_keep/station_data/dunedin
     out.index = out.index.normalize()
     return out
 
-def load_data_hourly(fpath="/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/5212.nc"):
-    ds = xr.open_dataset(fpath)
-    # Select only the hourly values
-    ds = ds.sel(time=ds.period.values == 1)
+def load_data_hourly(location, base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hourly'):
+    ds = xr.open_dataset(Path(base_path) / (location + '.nc'))    
     return ds['precipitation'].to_series()
 
 def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/dunedin/', 
