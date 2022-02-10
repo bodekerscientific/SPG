@@ -242,7 +242,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
 
 def get_opt(params, max_lr):
     sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 2000, 40000, 1e-5)
-    opt = optax.adamw(sched, weight_decay=1e-4)
+    opt = optax.adamw(sched, weight_decay=0.1)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
     opt = optax.lookahead(opt, 5, 0.5)
@@ -352,14 +352,14 @@ def load_params(model, path, num_feat):
 def gamma_mix(num_dists=2):
     return MixtureModel(dists=[Gamma() for _ in range(num_dists)])
 
-# 
-# def get_model():
-#     return BernoulliSPG(dist=MixtureModel(dists=[Gamma(), GenPareto(), GenPareto()]))
-
-
 
 def get_model():
-    return BernoulliSPG(dist=MixtureModel(dists=[Weibull(), GenPareto(), GenPareto()]))
+    return BernoulliSPG(dist=MixtureModel(dists=[Gamma(), GenPareto(), GenPareto()]))
+
+
+
+# def get_model():
+#     return BernoulliSPG(dist=MixtureModel(dists=[Weibull(), GenPareto(), GenPareto()]))
 
 
 def train_wh(**kwargs):
@@ -375,7 +375,25 @@ def train_wh(**kwargs):
 
     train(num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
 
-def train_daily(model, load_stats=True, params_path=None, **kwargs):
+def train_hourly(model, location, load_stats=False, params_path=None, **kwargs):
+    data = data_utils.load_data_hourly(location)
+    
+    ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*3*24, load_stats=load_stats, 
+                                                  stats_path='stats_hourly.json', freq='H')
+
+    tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
+    num_feat = len(ds_train[0][0])
+    print(f'Num features {num_feat}')
+
+    if params_path is not None:
+        params = load_params(model, params_path, num_feat)
+    else:
+        params = None
+
+    train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, **kwargs)
+
+
+def train_daily(model, load_stats=False, params_path=None, **kwargs):
     data = data_utils.load_data()
     
     ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*4, load_stats=load_stats, is_wh=False, freq='D')
@@ -405,8 +423,8 @@ if __name__ == '__main__':
     bs = 256
 
     params_path = 'params_wh.data'
-
-    train_daily(model=model, log=wandb.log, params_path=params_path)
+    train_hourly(model=model, log=wandb.log, location='tauranga')
+    #train_daily(model=model, log=wandb.log, params_path=params_path, )
     #train_wh(model=model, log
     # =wandb.log)
     

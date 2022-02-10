@@ -143,13 +143,14 @@ class PrecipitationDataset(Dataset):
         if stats is None:
             print('Calculating stats')
             stats = calculate_stats(self.X, self.Y)
+
         self.stats = stats
 
     def inverse_tr(self, y, key='y'):
-        return inverse_stats(y, self.stats[key])
+        return inverse_stats(self.stats[key], y)
         
     def apply_tr(self, data, key='x'):
-        return apply_stats(data, self.stats[key])
+        return apply_stats(self.stats[key], data)
 
     def __len__(self):
         return len(self.Y)
