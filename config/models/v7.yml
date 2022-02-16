@@ -1,0 +1,6 @@
+model:
+    MixtureModel:
+        - Gamma
+        - GenPareto
+        - GenPareto
+

@@ -21,8 +21,8 @@ import numpyro.distributions as npd
 from jax.experimental.host_callback import id_print
 
 from spg.generator import cycle 
-from spg import run
-from spg import distributions, jax_utils, data_utils
+from spg import distributions, run
+from spg import jax_utils, data_utils
 
 
 jax.config.update("jax_enable_x64", True)

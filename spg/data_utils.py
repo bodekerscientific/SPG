@@ -54,9 +54,9 @@ def load_data(fpath="/mnt/temp/projects/emergence/data_keep/station_data/dunedin
     out.index = out.index.normalize()
     return out
 
-def load_data_hourly(location, base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hourly'):
-    ds = xr.open_dataset(Path(base_path) / (location + '.nc'))    
-    return ds['precipitation'].to_series()
+def load_nc(input_path):
+    with xr.open_dataset(input_path) as ds:
+        return ds.load()['precipitation'].to_series()
 
 def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/dunedin/', 
             batches= ['batch_870_ant', 'batch_871_ant', 'batch_872_ant'], num_ens=400, spin_up_days=8,
