@@ -34,7 +34,6 @@ from bslibs.plot.qqplot import qqplot
 import wandb
 
 
-
 # Global flag to set a specific platform, must be used at startup.
 #jax.config.update('jax_platform_name', 'cpu')
 
@@ -66,7 +65,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
     return output_path
 
 def get_opt(params, max_lr):
-    sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 2000, 40000, 1e-5)
+    sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 2000, 30000, 1e-5)
     opt = optax.adamw(sched, weight_decay=0.1)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
@@ -75,57 +74,51 @@ def get_opt(params, max_lr):
 
     return opt, opt_state, params
 
-def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_lr=1e-3, num_epochs=100, min_pr=0.1):
+def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_lr=1e-3, num_epochs=100, min_pr=0.1, bs=256):
     rng = random.PRNGKey(42**2)
-    x = jnp.ones((num_feat,), dtype=jnp.float32)
+    x = jnp.ones(( num_feat,), dtype=jnp.float32)
 
     params_init = model.init(random.PRNGKey(0), x, rng, train=True)
 
     if params is None:
         params = params_init
 
-    batch_stats = params['batch_stats']
-    params = params['params']
-
-
     opt, opt_state, params = get_opt(params, max_lr)
 
+    @jax.jit
     def val_loss_func(params, x_b, y_b):
         # Negative Log Likelihood loss
         def nll(x, y):
-            return -model.apply(params, x, y, False, method=model.log_prob, mutable=False)
+            return -model.apply(params, x, y, False, method=model.log_prob)
 
         # Use vamp to vectorize over the batch dim.
         return jax.vmap(nll)(x_b, y_b).mean()
 
-
+    @jax.jit
     def tr_loss_func(params, x_b, y_b):
         # Negative Log Likelihood loss
         def loss(x, y):
-            return  model.apply(params, x, y, True, method=model.log_prob, mutable=["batch_stats"])
+            return  model.apply(params, x, y, True, method=model.log_prob, )
 
         # Use vamp to vectorize over the batch dim.
-        log_p, batch_stats = jax.vmap(loss)(x_b, y_b)
-        batch_stats = jax.tree_util.tree_map(jnp.mean, batch_stats)
-        return (-log_p).mean(), batch_stats
+        log_p = jax.vmap(loss)(x_b, y_b)
+        return (-log_p).mean()
     
     @jax.jit
-    def step(x, y, params, opt_state, batch_stats):
-        (loss, batch_stats), grads = jax.value_and_grad(tr_loss_func, has_aux=True)({'params' : params.fast,
-                                                                                     'batch_stats' : batch_stats}, x, y, )
-        updates, opt_state = opt.update(grads['params'], opt_state, params)
+    def step(x, y, params, opt_state):
+        loss, grads = jax.value_and_grad(tr_loss_func)(params.fast, x, y)
+        updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
-        return loss, params, opt_state, batch_stats
+        return loss, params, opt_state
 
     
     @jax.jit
-    def val_step(x_b, y_b, params, rng, batch_stats):
-        loss = val_loss_func({'params' : params.slow, 'batch_stats' : batch_stats}, x_b, y_b)
+    def val_step(x_b, y_b, params, rng):
+        loss = val_loss_func(params.slow, x_b, y_b)
 
         def get_sample(x, rng):
             rng, sample_rng = random.split(rng)
-            return model.apply({'params' : params.slow, 'batch_stats' : batch_stats}, 
-                                x, sample_rng, False, method=model.sample)
+            return model.apply(params.slow, x, sample_rng, False, method=model.sample)
 
         rngs = random.split(rng, num=len(x_b))
         pred = jax.vmap(get_sample)(x_b, rngs)
@@ -136,14 +129,12 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
         tr_loss = []
         for n, batch in enumerate(tr_loader):
             #assert not np.isnan(batch[0]).any()
-            loss, params, opt_state, batch_stats = step(batch[0], batch[1], params, opt_state, batch_stats)
+            loss, params, opt_state = step(batch[0], batch[1], params, opt_state)
 
-            id_print(loss)
             wandb.log({'train_loss_step' : loss})
             tr_loss.append(loss)
         
-        param_path = save_params({'params' : params.slow, 'batch_stats' : batch_stats}, 
-                                  epoch, output_folder=cfg.param_path)
+        param_path = save_params(params.slow, epoch, output_folder=cfg.param_path)
 
         # Calculate the validation loss and generate some samples.
         val_loss = []
@@ -151,7 +142,7 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
         targets = []
         for batch in valid_loader:
             x, y = batch
-            loss, pred, rng = val_step(x, y, params, rng, batch_stats)
+            loss, pred, rng = val_step(x, y, params, rng)
             val_loss.append(loss)
             preds.append(pred)
             targets.append(y)
@@ -177,9 +168,9 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
 
         make_qq(preds, targets, epoch, log, output_folder=cfg.plot_path)
 
-        if epoch > 2 and val_loss < best_loss:
-            best_loss = val_loss
-            wandb.log_artifact( str(param_path), name='params_' + str(epoch).zfill(3), type='training_weights') 
+        # if epoch > 2 and val_loss < best_loss:
+        #     best_loss = val_loss
+        #     wandb.log_artifact( str(param_path), name='params_' + str(epoch).zfill(3), type='training_weights') 
 
 
 def load_params(model, path, num_feat): 
@@ -214,9 +205,11 @@ def get_model(version=None, path=None):
 
     with open(path, 'r') as f:
         model_dict = yaml.load(f, Loader=yaml.FullLoader)
+
+    print(f'Model: {model_dict}')
         
     dist = parse_model(model_dict['model'])
-    return spg_dist.BernoulliSPG(dist=dist)
+    return spg_dist.BernoulliSPG(dist=dist), model_dict
 
 
 def get_config(name, version, location):
@@ -295,15 +288,15 @@ def train_daily(model, load_stats=False, params_path=None, **kwargs):
 
 
 if __name__ == '__main__':
-    version = 'v7'
-    loc = 'dunedin'
+    version = 'v8'
+    loc = 'tauranga'
     cfg = get_config('base_hourly', version=version, location=loc)
-    model = get_model(version)
+    model, model_dict = get_model(version)
 
     logging=True
 
     if logging:
-        wandb.init(entity='bodekerscientific', project='SPG', config=cfg)
+        wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg, 'model_dict' : model})
         logger = wandb.log
     else:
         logger = lambda *args : None
@@ -311,7 +304,7 @@ if __name__ == '__main__':
     bs = 256
     
     #params_path = '/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/v7/dunedin/params/params_022.data'
-    train_hourly(model=model, log=wandb.log, cfg=cfg, params_path=None)
+    train_hourly(model=model, log=wandb.log, cfg=cfg, params_path=None, bs=bs)
 
     #train_daily(model=model, log=wandb.log, params_path=params_path, )
     #train_wh(model=model, log
