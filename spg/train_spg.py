@@ -289,7 +289,7 @@ def train_daily(model, load_stats=False, params_path=None, **kwargs):
 
 if __name__ == '__main__':
     version = 'v8'
-    loc = 'tauranga'
+    loc = 'christchurch'
     cfg = get_config('base_hourly', version=version, location=loc)
     model, model_dict = get_model(version)
 

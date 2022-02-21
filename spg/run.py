@@ -28,7 +28,7 @@ import flax
 from tqdm import tqdm
 import jax
 
-N_CPU = 12
+N_CPU = 8
 
 
 def cond_func(values, last_cond):
@@ -190,7 +190,7 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_sa
     output = setup_output(data, feat_samples, start_date, end_date, spin_up_steps=spin_up_steps, freq=freq)
 
     num_feat = feat_func_norm(output.iloc[0:feat_samples+1]).shape[1]
-    model = train_spg.get_model(cfg.version)
+    model, model_dict = train_spg.get_model(cfg.version)
     params = train_spg.load_params(model, params_path, num_feat)
     
     @jax.jit
@@ -251,9 +251,9 @@ def get_params_path(cfg, epoch):
     return cfg.param_path / f'params_{str(epoch).zfill(3)}.data'
 
 def run_hourly():
-    location = 'tauranga'
-    version = 'v7'
-    param_epoch = 37
+    location = 'christchurch'
+    version = 'v8'
+    param_epoch = 74
 
     cfg = train_spg.get_config('base_hourly', version, location)
     data = data_utils.load_nc(cfg.input_file)

@@ -22,6 +22,18 @@ tfd = tfp.distributions
 def safe_log(x):
     return jnp.log(jnp.maximum(x, 1e-6))
 
+class FeedForward(nn.Module):
+    mult: int = 4
+    dropout: float = 0.5
+    features : int = 256
+
+    @nn.compact
+    def __call__(self, x, deterministic=False):
+        x = nn.Dense(self.features * self.mult)(x)
+        x = nn.gelu(x)
+        # x = nn.Dropout(self.dropout,)(x, deterministic=deterministic)
+        x = nn.Dense(self.features)(x)
+        return x
 
 
 class MLP(nn.Module):
@@ -45,19 +57,6 @@ class MLP(nn.Module):
             x = norm()(x)
 
         x = nn.Dense(self.features[-1])(x)
-        return x
-
-class FeedForward(nn.Module):
-    mult: int = 4
-    dropout: float = 0.5
-    features : int = 256
-
-    @nn.compact
-    def __call__(self, x, deterministic=False):
-        x = nn.Dense(self.features * self.mult)(x)
-        x = nn.gelu(x)
-        # x = nn.Dropout(self.dropout,)(x, deterministic=deterministic)
-        x = nn.Dense(self.features)(x)
         return x
 
 class Transformer(nn.Module):
@@ -96,7 +95,7 @@ class ReScale(nn.Module):
 
 class BernoulliSPG(nn.Module):
     dist: Callable
-    mlp_hidden: Sequence[int] = (256,)*8
+    mlp_hidden: Sequence[int] = (256,)*3
     min_pr: int = 0.1
 
     def setup(self, ):
