@@ -9,11 +9,7 @@ def get_ds(data=None):
 
     return data_loader.PrecipitationDataset(data)
 
-def test_dataset_hourly():
-    data = data_utils.load_data_hourly()
-    ds = get_ds(data)
 
-    print(len(ds))
 
 def test_get_daily_features():
     precip = np.array([10, 1.0, 0, 0.05 , 20])

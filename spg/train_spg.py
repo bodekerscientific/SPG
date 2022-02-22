@@ -150,6 +150,9 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
         preds = jnp.concatenate(preds, axis=None)
         targets = jnp.concatenate(targets, axis=None)
 
+        print(f'preds std : {preds.std()}')
+        print(f'target std : {targets.std()}')
+
         # Calculate the expected number of rain days
         dd_target = (targets < min_pr).sum()/targets.size
         dd_pred = (preds < min_pr).sum()/preds.size
@@ -222,6 +225,7 @@ def get_config(name, version, location):
 
     cfg.output_path = Path(cfg.output_path) / version / location 
     cfg.output_path.mkdir(parents=True, exist_ok=True)
+    #cfg.stats_path = 'stats_test.json'
     cfg.stats_path = cfg.output_path / 'stats.json'
     
     cfg.param_path = cfg.output_path / 'params'
@@ -250,7 +254,7 @@ def train_wh(**kwargs):
 
     train(num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
 
-def train_hourly(model, cfg, load_stats=False, params_path=None, **kwargs):
+def train_hourly(model, cfg, load_stats=True, params_path=None, **kwargs):
     data = data_utils.load_nc(cfg.input_file)
 
     ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*3*24, load_stats=load_stats, 
@@ -288,7 +292,7 @@ def train_daily(model, load_stats=False, params_path=None, **kwargs):
 
 
 if __name__ == '__main__':
-    version = 'v8'
+    version = 'v7'
     loc = 'christchurch'
     cfg = get_config('base_hourly', version=version, location=loc)
     model, model_dict = get_model(version)

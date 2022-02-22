@@ -6,6 +6,7 @@
     You might need to set, as TF and JAX will both try grab the full gpu memory.
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
 """
+from datetime import datetime
 from distutils.command.config import config
 from bslibs.plot.qqplot import qqplot
 
@@ -191,6 +192,7 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_sa
 
     num_feat = feat_func_norm(output.iloc[0:feat_samples+1]).shape[1]
     model, model_dict = train_spg.get_model(cfg.version)
+    print(model_dict)
     params = train_spg.load_params(model, params_path, num_feat)
     
     @jax.jit
@@ -215,13 +217,12 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_sa
                 print('Got invalid value!!')
             # if not jnp.isfinite(out):
             #     id_print(out)
-        output.iloc[n] = out
+
+        # Denormalise
+        output.values[n] =  data_loader.inverse_stats(stats['y'], out)
 
     # Remove the real data and spin up period from the output
     output = output.iloc[spin_up_steps:]
-
-    # Denormalise
-    output.values[:] = data_loader.inverse_stats(stats['y'], output.values)
 
     return output
     
@@ -252,19 +253,21 @@ def get_params_path(cfg, epoch):
 
 def run_hourly():
     location = 'christchurch'
-    version = 'v8'
-    param_epoch = 74
+    version = 'v7'
+    param_epoch = 23
 
     cfg = train_spg.get_config('base_hourly', version, location)
     data = data_utils.load_nc(cfg.input_file)
+    print(cfg)
 
     stats = data_loader.open_stats(cfg.stats_path)
     param_path = get_params_path(cfg, param_epoch)
 
     preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, freq='H')
+
     data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'))
 
-    run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H')
+    # run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H')
 
 def run_daily():
     # TODO: Update with config file
