@@ -10,17 +10,7 @@ import xarray as xr
 import pandas as pd
 
 base_path = Path('/mnt/temp/projects/otago_uni_marsden/data_keep/')
-output_path = base_path / 'plots' / 'hist_plots'
-output_path.mkdir(parents=True, exist_ok=True)
-loc_name = 'dunedin'
-version = 'v6'
 
-obs_path = ens_path = base_path / f'spg/station_data_hourly/{loc_name}.nc'
-spg_path = base_path / f'spg/ensemble_hourly/{version}/{loc_name}.nc'
-
-#%%
-ds_obs = xr.open_dataset(obs_path).load()
-ds_spg = xr.open_dataset(spg_path).load()
 
 # %%
 def plot(obs, target, title, log=True, density=True, xlim=(0, 30)):
@@ -73,7 +63,7 @@ def resample(ds):
     
 
 #%%
-def make_plots(ds_obs, ds_spg, kind='hourly'):
+def make_plots(ds_obs, ds_spg, output_path, kind='hourly'):
     plot(ds_obs['precipitation'].values, ds_spg['precipitation'].values, 
         f'{kind} Precipitation'.title())
     plt.tight_layout()
@@ -87,7 +77,21 @@ def make_plots(ds_obs, ds_spg, kind='hourly'):
     plt.show()
 
 if __name__ == '__main__':
+    version = 'v7'
 
-    make_plots(ds_obs, ds_spg)
+    for loc in ['dunedin', 'christchurch', 'tauranga']:
 
-    make_plots(resample(ds_obs), resample(ds_spg), kind='daily')
+        output_path = base_path / 'plots' / 'hist_plots' / loc
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        obs_path = ens_path = base_path / f'spg/station_data_hourly/{loc}.nc'
+        spg_path = base_path / f'spg/ensemble_hourly/{version}/{loc}/{loc}.nc'
+
+        #%%
+        ds_obs = xr.open_dataset(obs_path).load()
+        ds_spg = xr.open_dataset(spg_path).load()
+        #ds_spg['precipitation'] *= 0.904698371887207
+
+        make_plots(ds_obs, ds_spg, output_path)
+
+        make_plots(resample(ds_obs), resample(ds_spg), output_path, kind='daily')

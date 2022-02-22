@@ -18,12 +18,10 @@ base_path = Path('/mnt/temp/projects/otago_uni_marsden/data_keep/')
 output_path = base_path / 'plots' / 'reg_plots'
 output_path.mkdir(parents=True, exist_ok=True)
 
-loc_name = 'dunedin'
-location_lat = -44.526
-location_lon = 169.889
-
-obs_path = ens_path = base_path / f'spg/station_data/{loc_name}.nc'
-wh_path = base_path / 'weather_at_home' / loc_name
+locations = {'dunedin' : (-44.526, 169.889),
+             'tauranga' : (-37.713386, 176.116161),
+             'christchurch' : (-43.487553, 172.534807)
+}
 
 
 def fit_and_plot(x, y, title, **kwargs):
@@ -81,20 +79,24 @@ rcp_mappings = {
 
 df_magic = load_magic()
 #%%
-rcm_output = defaultdict(list)
-for rcp in df_magic.columns:
-    if rcp in rcp_mappings:
-        print(f'Processing rcp {rcp}')
-        rcm_data = load_all_models(location_lat, location_lon, rcp_mappings[rcp])
-        for k,v in rcm_data.items():
-            tp = get_tprime_for_years(v['year'].values, df_magic[rcp])
-            rcm_output['tprime'].extend(tp)
-            rcm_output['precipitation'].extend(v['rain'].values)
-            rcm_output['model'].extend([k]*len(tp))
-            rcm_output['year'].extend(v['year'].values)
-            rcm_output['rcp'].extend([rcp]*len(tp))
 
-rcm_output = pd.DataFrame(rcm_output)
+rcm_output = {}
+for loc, (location_lat, location_lon) in locations.items():
+    rcm_df = defaultdict(list)
+    for rcp in df_magic.columns:
+        if rcp in rcp_mappings:
+            print(f'Processing rcp {rcp}')
+            rcm_data = load_all_models(location_lat, location_lon, rcp_mappings[rcp])
+            for k,v in rcm_data.items():
+                tp = get_tprime_for_years(v['year'].values, df_magic[rcp])
+                rcm_df['tprime'].extend(tp)
+                rcm_df['precipitation'].extend(v['rain'].values)
+                rcm_df['model'].extend([k]*len(tp))
+                rcm_df['year'].extend(v['year'].values)
+                rcm_df['rcp'].extend([rcp]*len(tp))
+
+    rcm_df = pd.DataFrame(rcm_df)
+    rcm_output[loc] = rcm_df
 
 #%%
 def load_bmax(path):
@@ -123,20 +125,35 @@ def show_and_save(path=None):
     plt.show()
 
 #%%
-for version in ['v6']:
-    ens_path = base_path / f'spg/ensemble_hourly/{version}/'
-    ens_all = list(ens_path.glob('dunedin_*.nc'))
-    ds_ens = load_ds_bmax_mf(ens_all)
+
+for loc in locations:
+    obs_path = ens_path = base_path / f'spg/station_data/{loc}.nc'
+    wh_path = base_path / 'weather_at_home' / loc
     
-    fit_and_plot(ds_ens['tprime'].values.reshape(-1),
-                ds_ens['precipitation'].values.reshape(-1), title=f'{version}_hourly Annual Daily Maxima')
-    show_and_save(output_path / f'spg_hourly_{version}.png')
+    output_path_loc = output_path / loc
+    output_path_loc.mkdir(exist_ok=True)
+
+    for version in ['v7']:
+        ens_path = base_path / f'spg/ensemble_hourly/{version}/{loc}/'
+        ens_all = list(ens_path.glob(f'{loc}_*.nc'))
+        ds_ens = load_ds_bmax_mf(ens_all)
+        
+        fit_and_plot(ds_ens['tprime'].values.reshape(-1),
+                    ds_ens['precipitation'].values.reshape(-1), title=f'{version}_{loc}_hourly Annual Daily Maxima')
+        show_and_save(output_path_loc / f'spg_hourly_{version}.png')
+
+
 
 #%%
-for model in rcm_output['model'].unique():
-    subset = rcm_output[rcm_output['model'] == model]
-    fit_and_plot(subset['tprime'].values, subset['precipitation'].values, f'RCM {model}')
-    show_and_save(output_path / f'rcm_{model}.png')
+for loc in locations:
+    output_path_loc = output_path / loc
+
+    for model in rcm_output[loc]['model'].unique():
+        subset = rcm_output[rcm_output[loc]['model'] == model]
+        fit_and_plot(subset['tprime'].values, subset['precipitation'].values, f'RCM {model} {loc}')
+        show_and_save(output_path / f'rcm_{loc}_{model}.png')
+
+
 
 for version in ['v0.2', 'v3', 'v4', 'v5_wh']:
     ens_path = base_path / f'spg/ensemble/{version}/'
