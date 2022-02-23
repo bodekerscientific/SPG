@@ -54,6 +54,12 @@ def load_data(fpath="/mnt/temp/projects/emergence/data_keep/station_data/dunedin
     out.index = out.index.normalize()
     return out
 
+def load_data_hourly(fpath="/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/5212.nc"):
+    ds = xr.open_dataset(fpath)
+    # Select only the hourly values
+    ds = ds.sel(time=ds.period.values == 1)
+    return ds['precipitation'].to_series()
+
 def load_nc(input_path):
     with xr.open_dataset(input_path) as ds:
         return ds.load()['precipitation'].to_series()
@@ -87,5 +93,6 @@ def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at
     return out
 
 if __name__ == '__main__':
-    load_data_hourly()
+    df = load_data_hourly()
+    save_nc_tprime(df, 'tara_hills.nc', units='mm/hr')
     #print(t_prime)
