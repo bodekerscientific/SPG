@@ -1,17 +1,25 @@
 output_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/
 input_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hourly/
 ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly/
-num_ens : 4
+num_ens : 8
+max_values :
+  dunedin : 40
+  dunedin_south : 40
+  dunedin_aero : 40
+  tarahills : 50
+  tauranga : 80
+  christchurch : 40
+  
 scenarios :
-  - rcp26
-  - rcp45
-  - rcp60
+  # - rcp26
+  # - rcp45
+  # - rcp60
   - rcp85
-  - ssp119
-  - ssp126
-  - ssp245
-  - ssp370
-  - ssp434
-  - ssp460
-  - ssp585
+  # - ssp119
+  # - ssp126
+  # - ssp245
+  # - ssp370
+  # - ssp434
+  # - ssp460
+  # - ssp585
   

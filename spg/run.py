@@ -113,7 +113,7 @@ def setup_output(data, feat_samples, start_date, end_date, spin_up_steps=1000, f
     return output
 
 def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_samples = 6*24, spin_up_steps=1000, 
-                start_date=None, end_date=None, rng=None, sce='ssp245', use_tqdm=True, freq='H'):
+                start_date=None, end_date=None, rng=None, sce='ssp245', use_tqdm=True, freq='H', max_pr=100):
 
     assert freq in ['H', 'D'], 'Only hourly and daily SPGs are supported at this time.'
     
@@ -149,16 +149,18 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_sa
         # Sometimes (very rarely) we get an np.nan
         # So just repeat until we get a valid output
         out = jnp.nan
-        while(not jnp.isfinite(out)):
+        while(not jnp.isfinite(out) or out > max_pr):
             rng, sample_rng = random.split(rng)
             out = sample_func(x[0], sample_rng)
-            if jnp.isnan(out):
+            if not jnp.isfinite(out):
                 print('Got invalid value!!')
-            # if not jnp.isfinite(out):
-            #     id_print(out)
+            else:
+                # Denormalise
+                out  = data_loader.inverse_stats(stats['y'], out)
+                if out > max_pr:
+                    print(f'Got a 1{freq} precipitation of {out}')
 
-        # Denormalise
-        output.values[n] =  data_loader.inverse_stats(stats['y'], out)
+        output.values[n] =  out
 
     # Remove the real data and spin up period from the output
     output = output.iloc[spin_up_steps:]
@@ -206,37 +208,40 @@ def run_hourly():
     cfg = train_spg.get_config('base_hourly', version, location, param_epoch)
     data = data_utils.load_nc(cfg.input_file)
     print(cfg)
+    max_pr = cfg['max_values'][location]
 
     stats = data_loader.open_stats(cfg.stats_path)
     param_path = get_params_path(cfg, param_epoch)
 
-    preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, freq='H')
+    preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, freq='H', max_pr=max_pr)
     data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'))
 
-    run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H')
+    run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H', max_pr=max_pr)
 
-def run_daily():
-    # TODO: Update with config file
-    fname_obs = 'dunedin'
-    version = 'v3'
-    output_path = Path('/mnt/temp/projects/otago_uni_marsden/data_keep/spg/')
-    save_obs = True
-    feat_samples = 8
 
-    output_path_obs = output_path / 'station_data' 
-    output_path_ens = output_path / 'ensemble' / version
-    output_path_ens.mkdir(exist_ok=True, parents=True)
 
-    data = data_utils.load_data()#'/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/1962.nc')
-    param_path = f'params_daily_{version}.data'
-    stats = data_loader.open_stats('./stats.json')
+# def run_daily():
+#     # TODO: Update with config file
+#     fname_obs = 'dunedin'
+#     version = 'v3'
+#     output_path = Path('/mnt/temp/projects/otago_uni_marsden/data_keep/spg/')
+#     save_obs = True
+#     feat_samples = 8
+
+#     output_path_obs = output_path / 'station_data' 
+#     output_path_ens = output_path / 'ensemble' / version
+#     output_path_ens.mkdir(exist_ok=True, parents=True)
+
+#     data = data_utils.load_data()#'/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/1962.nc')
+#     param_path = f'params_daily_{version}.data'
+#     stats = data_loader.open_stats('./stats.json')
     
-    run_kwargs = dict(data=data, stats=stats, params_path=param_path, feat_samples=feat_samples, freq='D')
+#     run_kwargs = dict(data=data, stats=stats, params_path=param_path, feat_samples=feat_samples, freq='D'   )
     
-    preds = run_spg_mlp(**run_kwargs)
-    data_utils.save_nc_tprime(preds, output_path_ens / (fname_obs + '.nc'), units='mm/day')
+#     preds = run_spg_mlp(**run_kwargs)
+#     data_utils.save_nc_tprime(preds, output_path_ens / (fname_obs + '.nc'), units='mm/day')
     
-    run_pool(output_folder=output_path_ens, file_pre=fname_obs, **run_kwargs)
+#     run_pool(output_folder=output_path_ens, file_pre=fname_obs, **run_kwargs)
 
 if __name__ == '__main__':
     run_hourly()

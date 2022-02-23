@@ -5,7 +5,6 @@
     
     You might need to set, as TF and JAX will both try grab the full gpu memory.
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
-
 """
 
 import yaml 
@@ -221,7 +220,7 @@ def get_config(name, version, location, ens=None):
         cfg = ConfigDict(cfg, type_safe=False)
     
     if ens is not None:
-        cfg.ens_path = Path(cfg.ens_path) / f'version' / f'{location}_epoch{str(ens).zfill(3)}'
+        cfg.ens_path = Path(cfg.ens_path) / version / f'{location}_epoch_{str(ens).zfill(3)}'
         cfg.ens_path.mkdir(parents=True, exist_ok=True)
 
     cfg.output_path = Path(cfg.output_path) / version / location 
@@ -294,7 +293,6 @@ def train_daily(model, load_stats=False, params_path=None, **kwargs):
 
 
 if __name__ == '__main__':
-
     version = 'v7'
     loc = 'tarahills'
     cfg = get_config('base_hourly', version=version, location=loc)
