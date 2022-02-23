@@ -6,8 +6,13 @@
     You might need to set, as TF and JAX will both try grab the full gpu memory.
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
 """
+import os
+
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
+
+
+import sys
 from datetime import datetime
-from distutils.command.config import config
 from bslibs.plot.qqplot import qqplot
 
 import pandas as pd
@@ -64,50 +69,6 @@ def plot_qq(target, predictions, output_path):
     plt.close()
 
 
-def param_func_scale_only(params, cond=None):
-    # Only non-stationary for the scale param, as the shape is unstable.
-    
-    if cond is not None and 'tprime' in cond and cond['tprime'].size > 1:
-        params_out = jnp.repeat(params[0:1, None], len(cond['tprime']), axis=1)
-    else:
-        params_out = params[:, None]
-        
-    return jnp.concatenate([params_out, jax_utils.linear_exp_split(params[1:], cond)], axis=0)
-
-
-def fit_spg(data, use_tf=True, ar_depth=12, thresh=0.1):
-    rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
-
-    if use_tf:
-        rain_dists = {0: distributions.TFGammaMix(num_mix=3),
-                      0.99: distributions.TFGeneralizedPareto()}
-    else:
-        rain_dists = {0: distributions.SSWeibull(),
-                      0.99: distributions.SSGeneralizedPareto()}
-    rng = random.PRNGKey(42)
-
-    sp = SPG(rd, rain_dists, rng)
-    sp.fit(data.values)
-    sp.print_params()
-
-    return sp
-
-def fit_spg_ns(data, t_prime, ar_depth=2, thresh=0.1):
-    rd = distributions.RainDay(thresh=thresh, ar_depth=ar_depth)
-
-    rain_dists = {0: distributions.TFWeibull(param_init=[0.75, 1.0, 0.5],
-                                             param_func=param_func_scale_only),
-                  0.99: distributions.TFGeneralizedPareto(param_init=[-1.0, 1.1, 0.01, 0.01],
-                                                          param_func=jax_utils.linear_exp_split)}
-
-    rng = random.PRNGKey(42)
-    sp = SPG(rd, rain_dists, rng)
-
-    sp.fit(data.values, cond={'tprime': t_prime})
-    sp.print_params()
-
-    return sp
-
 def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-1', 
               plot_path=Path('./qq.png'), tprime=None, freq='D'):
 
@@ -132,28 +93,6 @@ def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-
 
     return pd.Series(predictions, index=times)
 
-def gen_save(arg, data, sp, df_magic, output_path, **kwargs):
-    sce, ens_num, idx = arg
-    sp.rnd_key = random.PRNGKey(seed=971*(int(idx)+42))
-
-    predictions = gen_preds(sp, data, tprime=df_magic[sce], **kwargs)
-    data_utils.make_nc(predictions, output_path / f'dunedin_{sce}_{str(ens_num).zfill(3)}.nc', tprime=df_magic[sce])
-
-def run_non_stationary(output_path, data, scenario=['rcp26','rcp45','rcp60','rcp85','ssp119','ssp126',
-                                                    'ssp245','ssp370','ssp434','ssp460','ssp585'], num_ens=4,
-                                                    **kwargs):
-    df_magic = data_utils.load_magic()
-    t_prime = data_utils.get_tprime_for_times(data.index, df_magic['ssp245'])
-    sp = fit_spg_ns(data, t_prime)
-
-    ens = list(product(scenario, np.arange(num_ens) + 1))
-    idxs = np.arange(len(ens)) 
-    ens = np.concatenate([np.array(ens), idxs[:, None]], axis=1)
-
-    print(f'Running {len(ens)} scenarios')
-
-    with get_context('spawn').Pool(N_CPU) as p:
-        p.map(partial(gen_save, data=data, sp=sp, df_magic=df_magic, output_path=output_path, **kwargs), ens)
 
 def test_fit(data, **kwargs):
     sp = fit_spg(data)
@@ -251,12 +190,20 @@ def run_pool(cfg, **kwargs):
 def get_params_path(cfg, epoch):
     return cfg.param_path / f'params_{str(epoch).zfill(3)}.data'
 
-def run_hourly():
-    location = 'christchurch'
-    version = 'v7'
-    param_epoch = 23
 
-    cfg = train_spg.get_config('base_hourly', version, location)
+def run_hourly():
+    if len(sys.argv) == 4:
+        location = sys.argv[1]
+        version = sys.argv[2]
+        param_epoch = int(sys.argv[3])
+    else:
+        raise ValueError('You need to pass the run location, version and epoch number' \
+                          ' as an argument, e.g python spg/run.py dunedin v7 12')
+
+
+    print(f'Training {version} for {location} using epoch {param_epoch}')
+
+    cfg = train_spg.get_config('base_hourly', version, location, param_epoch)
     data = data_utils.load_nc(cfg.input_file)
     print(cfg)
 
@@ -264,10 +211,9 @@ def run_hourly():
     param_path = get_params_path(cfg, param_epoch)
 
     preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, freq='H')
-
     data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'))
 
-    # run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H')
+    run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H')
 
 def run_daily():
     # TODO: Update with config file
