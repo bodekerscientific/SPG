@@ -10,8 +10,8 @@ input_path = Path('/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAn
 
 locations = {
     'dunedin' : (-45.89, 170.501),
-    'christchurch' : (-43.530150, 172.635164),
-    'tauranga' : (-37.687027, 176.165421)
+    # 'christchurch' : (-43.530150, 172.635164),
+    # 'tauranga' : (-37.687027, 176.165421)
 }
 
 def load_close_stations(files, target_lat, target_lon, max_dist=40, max_height=70):
@@ -44,29 +44,37 @@ if __name__ == '__main__':
         print(site_name)
         all_sites[site_name] = load_close_stations(files, t_lat, t_lon)
 
-    # Join the two dunedin airport AWS
-    a = to_series(all_sites['dunedin']['DUNEDIN AERO AWS'])
-    b = to_series(all_sites['dunedin']['DUNEDIN AERO'])
+    # # Join the two dunedin airport AWS
+    # a = to_series(all_sites['dunedin']['DUNEDIN AERO AWS'])
+    # b = to_series(all_sites['dunedin']['DUNEDIN AERO'])
 
-    # Manually select the most suitable staions
-    dunedin = pd.concat([b, a])
-    chch = to_series(all_sites['christchurch']['CHRISTCHURCH AERO'])
-    tauranga = to_series(all_sites['tauranga']['TAURANGA AERO AWS'])
+    # # Manually select the most suitable staions
+    # dunedin = pd.concat([b, a])
+    # chch = to_series(all_sites['christchurch']['CHRISTCHURCH AERO'])
+    # tauranga = to_series(all_sites['tauranga']['TAURANGA AERO AWS'])
 
-    #%%
-    plt.figure(figsize=(20, 12))
-    plt.hist((dunedin, chch, tauranga), 15,
-            label=('dun', 'chch', 'tauranga'), density=True)
-    plt.yscale('log')
-    plt.legend()
-    plt.savefig('hist.png')
-    plt.close()
+    dunedin_south =  to_series(all_sites['dunedin']['DUNEDIN, MUSSELBURGH EWS'])
+    dunedin_aero =  to_series(all_sites['dunedin']['DUNEDIN AERO AWS'])
 
-    # Save the stations
+    # #%%
+    # plt.figure(figsize=(20, 12))
+    # plt.hist((dunedin, chch, tauranga), 15,
+    #         label=('dun', 'chch', 'tauranga'), density=True)
+    # plt.yscale('log')
+    # plt.legend()
+    # plt.savefig('hist.png')
+    # plt.close()
+
+    # # Save the stations
     output_path = Path('/mnt/temp/projects/otago_uni_marsden/data_keep/spg/')    
     output_path_obs = output_path / 'station_data_hourly' 
 
-    save_nc_tprime(dunedin, output_path_obs / 'dunedin.nc')
-    save_nc_tprime(chch, output_path_obs / 'christchurch.nc')
-    save_nc_tprime(tauranga, output_path_obs / 'tauranga.nc')
+    save_nc_tprime(dunedin_south, output_path_obs / 'dunedin_south.nc')
+    save_nc_tprime(dunedin_aero, output_path_obs / 'dunedin_aero.nc')
 
+    #save_nc_tprime(dunedin, output_path_obs / 'dunedin_south.nc')
+    # save_nc_tprime(chch, output_path_obs / 'christchurch.nc')
+    # save_nc_tprime(tauranga, output_path_obs / 'tauranga.nc')
+
+
+# %%

@@ -90,7 +90,6 @@ if __name__ == '__main__':
         #%%
         ds_obs = xr.open_dataset(obs_path).load()
         ds_spg = xr.open_dataset(spg_path).load()
-        #ds_spg['precipitation'] *= 0.904698371887207
 
         make_plots(ds_obs, ds_spg, output_path)
 

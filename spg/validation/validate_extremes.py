@@ -1,4 +1,5 @@
 #%%
+
 from bslibs.regression import gev
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -127,7 +128,7 @@ def show_and_save(path=None):
 #%%
 
 for loc in locations:
-    obs_path = ens_path = base_path / f'spg/station_data/{loc}.nc'
+    obs_path = ens_path = base_path / f'spg/station_data_hourly/{loc}.nc'
     wh_path = base_path / 'weather_at_home' / loc
     
     output_path_loc = output_path / loc
@@ -136,12 +137,19 @@ for loc in locations:
     for version in ['v7']:
         ens_path = base_path / f'spg/ensemble_hourly/{version}/{loc}/'
         ens_all = list(ens_path.glob(f'{loc}_*.nc'))
-        ds_ens = load_ds_bmax_mf(ens_all)
-        
-        fit_and_plot(ds_ens['tprime'].values.reshape(-1),
-                    ds_ens['precipitation'].values.reshape(-1), title=f'{version}_{loc}_hourly Annual Daily Maxima')
-        show_and_save(output_path_loc / f'spg_hourly_{version}.png')
+        if len(ens_all) > 0:
+            ds_ens = load_ds_bmax_mf(ens_all)
+            
+            fit_and_plot(ds_ens['tprime'].values.reshape(-1),
+                        ds_ens['precipitation'].values.reshape(-1), title=f'{version}_{loc}_hourly Annual Daily Maxima')
+            show_and_save(output_path_loc / f'spg_hourly_{version}.png')
+    
+    obs_ds = xr.open_dataset(obs_path)
+    obs_ds = obs_ds.groupby(obs_ds.time.dt.year)
+    #obs_ds = obs_ds.max().isel(year=obs_ds.count()['precipitation'] > 350)
 
+    fit_and_plot(obs_ds['tprime'].values, obs_ds['precipitation'].values, f'{version}_{loc}_Observations Annual Daily Maxima')
+    show_and_save(output_path_loc / 'obs.png')
 
 
 #%%
@@ -154,14 +162,6 @@ for loc in locations:
         show_and_save(output_path / f'rcm_{loc}_{model}.png')
 
 
-
-for version in ['v0.2', 'v3', 'v4', 'v5_wh']:
-    ens_path = base_path / f'spg/ensemble/{version}/'
-    ens_all = list(ens_path.glob('dunedin_*.nc'))
-    # print(f'Loading {ens_all}')
-    ds = load_ds_bmax_mf(ens_all)
-    fit_and_plot(y=ds['precipitation'].values, x=ds['tprime'].values, title=f'{version} Annual Daily Maxima')
-    show_and_save(output_path / f'spg_daily_{version}.png')
 
 #%%
 wh_all = load_wh(num_ens=500)
