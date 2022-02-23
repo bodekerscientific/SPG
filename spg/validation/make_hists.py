@@ -3,6 +3,7 @@
     Makes historgrams / qqplots of the SPG vs historical obs
 
 """
+
 from pathlib import Path
 import matplotlib.pyplot as plt
 from bslibs.plot.qqplot import qqplot
@@ -79,13 +80,17 @@ def make_plots(ds_obs, ds_spg, output_path, kind='hourly'):
 if __name__ == '__main__':
     version = 'v7'
 
-    for loc in ['dunedin', 'christchurch', 'tauranga']:
+    for loc_dir in (base_path / f'spg/ensemble_hourly/{version}/').iterdir():
+        print(loc_dir)
+        loc = loc_dir.name
+        loc = loc.split('_epoch')[0]
+        print(loc)
 
         output_path = base_path / 'plots' / 'hist_plots' / loc
         output_path.mkdir(parents=True, exist_ok=True)
         
         obs_path = ens_path = base_path / f'spg/station_data_hourly/{loc}.nc'
-        spg_path = base_path / f'spg/ensemble_hourly/{version}/{loc}/{loc}.nc'
+        spg_path = loc_dir / f'{loc}.nc'
 
         #%%
         ds_obs = xr.open_dataset(obs_path).load()
@@ -94,3 +99,4 @@ if __name__ == '__main__':
         make_plots(ds_obs, ds_spg, output_path)
 
         make_plots(resample(ds_obs), resample(ds_spg), output_path, kind='daily')
+# %%

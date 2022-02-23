@@ -126,30 +126,35 @@ def show_and_save(path=None):
     plt.show()
 
 #%%
+for version in ['v7']:
 
-for loc in locations:
-    obs_path = ens_path = base_path / f'spg/station_data_hourly/{loc}.nc'
-    wh_path = base_path / 'weather_at_home' / loc
-    
-    output_path_loc = output_path / loc
-    output_path_loc.mkdir(exist_ok=True)
+    for loc_dir in (base_path / f'spg/ensemble_hourly/{version}/').iterdir():
+        print(loc_dir)
+        loc = loc_dir.name
+        loc = loc.split('_epoch')[0]
+        print(loc)
 
-    for version in ['v7']:
-        ens_path = base_path / f'spg/ensemble_hourly/{version}/{loc}/'
-        ens_all = list(ens_path.glob(f'{loc}_*.nc'))
+        obs_path = ens_path = base_path / f'spg/station_data_hourly/{loc.split("_epoch")[0]}.nc'
+        wh_path = base_path / 'weather_at_home' / loc
+        
+        output_path_loc = output_path / loc
+        output_path_loc.mkdir(exist_ok=True)
+
+        ens_all = list(loc_dir.glob(f'{loc}_*.nc'))
         if len(ens_all) > 0:
             ds_ens = load_ds_bmax_mf(ens_all)
             
             fit_and_plot(ds_ens['tprime'].values.reshape(-1),
                         ds_ens['precipitation'].values.reshape(-1), title=f'{version}_{loc}_hourly Annual Daily Maxima')
             show_and_save(output_path_loc / f'spg_hourly_{version}.png')
-    
-    obs_ds = xr.open_dataset(obs_path)
-    obs_ds = obs_ds.groupby(obs_ds.time.dt.year)
-    #obs_ds = obs_ds.max().isel(year=obs_ds.count()['precipitation'] > 350)
 
-    fit_and_plot(obs_ds['tprime'].values, obs_ds['precipitation'].values, f'{version}_{loc}_Observations Annual Daily Maxima')
-    show_and_save(output_path_loc / 'obs.png')
+        obs_ds = xr.open_dataset(obs_path)
+        obs_ds = obs_ds.groupby(obs_ds.time.dt.year)
+        #obs_ds = obs_ds.max().isel(year=obs_ds.count()['precipitation'] > 350)
+
+        if ['tprime'] in obs_ds:
+            fit_and_plot(obs_ds['tprime'].values, obs_ds['precipitation'].values, f'{version}_{loc}_Observations Annual Daily Maxima')
+            show_and_save(output_path_loc / 'obs.png')
 
 
 #%%
