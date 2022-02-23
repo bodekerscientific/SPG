@@ -7,10 +7,10 @@
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
 
 """
+
 import yaml 
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = 'false'
-
 from copy import deepcopy
 import matplotlib.pyplot as plt
 import matplotlib
@@ -215,13 +215,14 @@ def get_model(version=None, path=None):
     return spg_dist.BernoulliSPG(dist=dist), model_dict
 
 
-def get_config(name, version, location):
+def get_config(name, version, location, ens=None):
     with open(Path('config/') / (name + '.yml'), 'r') as f:
         cfg = yaml.load(f, Loader=yaml.FullLoader)
         cfg = ConfigDict(cfg, type_safe=False)
     
-    cfg.ens_path = Path(cfg.ens_path) / version / location
-    cfg.ens_path.mkdir(parents=True, exist_ok=True)
+    if ens is not None:
+        cfg.ens_path = Path(cfg.ens_path) / f'version' / f'{location}_epoch{str(ens).zfill(3)}'
+        cfg.ens_path.mkdir(parents=True, exist_ok=True)
 
     cfg.output_path = Path(cfg.output_path) / version / location 
     cfg.output_path.mkdir(parents=True, exist_ok=True)
@@ -254,7 +255,7 @@ def train_wh(**kwargs):
 
     train(num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
 
-def train_hourly(model, cfg, load_stats=True, params_path=None, **kwargs):
+def train_hourly(model, cfg, load_stats=False, params_path=None, **kwargs):
     data = data_utils.load_nc(cfg.input_file)
 
     ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*3*24, load_stats=load_stats, 
@@ -291,9 +292,11 @@ def train_daily(model, load_stats=False, params_path=None, **kwargs):
     train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, **kwargs)
 
 
+
 if __name__ == '__main__':
+
     version = 'v7'
-    loc = 'christchurch'
+    loc = 'tarahills'
     cfg = get_config('base_hourly', version=version, location=loc)
     model, model_dict = get_model(version)
 
