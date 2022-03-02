@@ -1,3 +1,4 @@
+from collections import defaultdict
 from torch.utils.data import Dataset, DataLoader
 import pandas as pd
 import numpy as np
@@ -99,6 +100,39 @@ def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], 
 
     return x[mask, :], y[mask]
 
+def generate_features_multiscale(pr, avg_period=[1, 2, 4, 8], cond_x=4, inc_doy=True, inc_tod=True, inc_tprime=True, rd_thresh=0.1):
+    output = defaultdict(list)
+    pr_re_rd = (pr > rd_thresh).astype(np.float32)
+
+    for av_hr, avg_hr_last in zip(avg_period[1:], avg_period[:-1]):
+        pr_av = pr.rolling(av_hr).sum().values
+
+        pr_av_last = pr.rolling(avg_hr_last).sum().values
+        x_rd = pr_re_rd.rolling(avg_hr_last).sum().values
+
+        # Calculate the sum of N days of precipitation and rain days for the conditioning
+        x_rd = np.stack([x_rd[n:-cond_x+n] for n in range(cond_x)], axis=1)
+        x_pr = np.stack([pr_av_last[n:-cond_x+n] for n in range(cond_x)], axis=1)
+        x = np.concatenate([x_pr, x_rd], axis=1)
+
+        pr_av = pr_av[cond_x:]
+        pr_av_last = pr_av_last[cond_x:]
+
+        ratio = pr_av_last/pr_av
+        ratio[pr_av_last == 0.0] = 0.0 
+        ratio[pr_av == 0.0] = 0.5 
+
+
+        mask = ~(np.isnan(pr_av) | np.isnan(x).any(axis=1) | np.isnan(ratio))
+        
+        output['freq'].extend(np.full_like(ratio[mask], av_hr))
+        output['x'].extend(x[mask, :])
+        output['pr'].extend(pr_av[mask])
+        output['ratio'].extend(ratio[mask])
+
+    return {k : np.stack(v) for k,v in output.items()}
+
+
 def calculate_stats(x, y):
     x_stats = {'mean' : np.mean(x, axis=0), 'std' : np.std(x, axis=0)}
     y_stats = {'mean' : np.array(0.0, dtype=np.float32), 'std' : np.std(y, axis=0)}
@@ -175,6 +209,13 @@ class PrecipitationDatasetWH(PrecipitationDataset):
             print('Calculating stats')
             stats = calculate_stats(self.X, self.Y)
         self.stats = stats
+
+class PrecipitationDatasetMultiScale(Dataset):
+    def __init__(self, pr, stats=None, is_wh=False, **kwargs):
+        if is_wh:
+            pass
+
+
 
 
 @jax.jit

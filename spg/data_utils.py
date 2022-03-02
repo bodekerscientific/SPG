@@ -1,5 +1,6 @@
 from collections import defaultdict
 from functools import lru_cache
+from typing import Iterable
 import pandas as pd
 import xarray as xr
 from bslibs.ncutils import get_attributes
@@ -66,7 +67,7 @@ def load_nc(input_path):
 
 def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/dunedin/', 
             batches= ['batch_870_ant', 'batch_871_ant', 'batch_872_ant'], num_ens=400, spin_up_days=8,
-            mult_factor=1.75):
+            mult_factor=1.75) -> Iterable[pd.DataFrame]:
 
     batches_tprime = {'batch_870_ant' : 1.5, 'batch_871_ant' : 2.0, 'batch_872_ant' : 3.0}
 

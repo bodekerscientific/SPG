@@ -73,6 +73,20 @@ def test_wh_loader():
     assert len(wh_tr) == 360*2*3
     assert len(wh_val) == 360*3
 
+def test_feat_multiscale():
+    precip = np.array([10, 1.0, 0, 0, 0, 0.05 , 20, 11, 1, 0, np.nan])
+    expected = np.array([0.0, 0.5, 0.5, 1.0, 20/20.05, 11/31, 1/12, 0.0])
+    dts = pd.date_range(start=pd.Timestamp('2019-01-01'), periods=len(precip), freq='H')
+    pr = pd.Series(precip, index=dts)
+
+    res = data_loader.generate_features_multiscale(pr, avg_period=[1, 2,], cond_x=2)
+    ratio = res['ratio']
+    avg_period=[1, 2, 4]
+
+
+    
+
+
 
 if __name__ == '__main__':
-    test_wh_loader()
+    test_feat_multiscale()
