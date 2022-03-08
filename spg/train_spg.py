@@ -64,8 +64,8 @@ def save_params(params, epoch : int, output_folder='./results/params'):
     return output_path
 
 def get_opt(params, max_lr):
-    sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 2000, 30000, 1e-5)
-    opt = optax.adamw(sched, weight_decay=0.1)
+    sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 200, 30000, 1e-5)
+    opt = optax.adamw(sched, weight_decay=0.01)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
     opt = optax.lookahead(opt, 5, 0.5)
@@ -73,11 +73,11 @@ def get_opt(params, max_lr):
 
     return opt, opt_state, params
 
-def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_lr=1e-3, num_epochs=100, min_pr=0.1, bs=256):
+def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_lr=1e-4, num_epochs=100, min_pr=0.1, bs=256):
     rng = random.PRNGKey(42**2)
     x = jnp.ones(( num_feat,), dtype=jnp.float32)
 
-    params_init = model.init(random.PRNGKey(0), x, rng, train=True)
+    params_init = model.init(random.PRNGKey(0), x, rng, train=False)
 
     if params is None:
         params = params_init
@@ -94,21 +94,23 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
         return jax.vmap(nll)(x_b, y_b).mean()
 
     @jax.jit
-    def tr_loss_func(params, x_b, y_b):
+    def tr_loss_func(params, x_b, y_b, rng):
         # Negative Log Likelihood loss
-        def loss(x, y):
-            return  model.apply(params, x, y, True, method=model.log_prob, )
+        def loss(x, y, rng_drop):
+            return  model.apply(params, x, y, True, method=model.log_prob, rngs = {'dropout': rng_drop},  )
 
         # Use vamp to vectorize over the batch dim.
-        log_p = jax.vmap(loss)(x_b, y_b)
+        rngs = random.split(rng, num=len(x_b))
+        log_p = jax.vmap(loss)(x_b, y_b, rngs)
         return (-log_p).mean()
     
     @jax.jit
-    def step(x, y, params, opt_state):
-        loss, grads = jax.value_and_grad(tr_loss_func)(params.fast, x, y)
+    def step(x, y, params, opt_state, rng):
+        loss, grads = jax.value_and_grad(tr_loss_func)(params.fast, x, y, rng)
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
-        return loss, params, opt_state
+
+        return loss, params, opt_state, random.split(rng)[1]
 
     
     @jax.jit
@@ -116,8 +118,9 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
         loss = val_loss_func(params.slow, x_b, y_b)
 
         def get_sample(x, rng):
-            rng, sample_rng = random.split(rng)
-            return model.apply(params.slow, x, sample_rng, False, method=model.sample)
+            rng_drop, sample_rng = random.split(rng)
+            return model.apply(params.slow, x, sample_rng, False, method=model.sample,
+                               rngs={'dropout': rng_drop})
 
         rngs = random.split(rng, num=len(x_b))
         pred = jax.vmap(get_sample)(x_b, rngs)
@@ -128,7 +131,7 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
         tr_loss = []
         for n, batch in enumerate(tr_loader):
             #assert not np.isnan(batch[0]).any()
-            loss, params, opt_state = step(batch[0], batch[1], params, opt_state)
+            loss, params, opt_state, rng = step(batch[0], batch[1], params, opt_state, rng)
 
             wandb.log({'train_loss_step' : loss})
             tr_loss.append(loss)
@@ -211,7 +214,7 @@ def get_model(version=None, path=None):
     print(f'Model: {model_dict}')
         
     dist = parse_model(model_dict['model'])
-    return spg_dist.BernoulliSPG(dist=dist), model_dict
+    return spg_dist.BernoulliLogitNormal(), model_dict
 
 
 def get_config(name, version, location, ens=None):
@@ -225,7 +228,6 @@ def get_config(name, version, location, ens=None):
 
     cfg.output_path = Path(cfg.output_path) / version / location 
     cfg.output_path.mkdir(parents=True, exist_ok=True)
-    #cfg.stats_path = 'stats_test.json'
     cfg.stats_path = cfg.output_path / 'stats.json'
     
     cfg.param_path = cfg.output_path / 'params'
@@ -233,9 +235,14 @@ def get_config(name, version, location, ens=None):
     cfg.plot_path = cfg.output_path / 'plots'
     cfg.plot_path.mkdir(parents=True, exist_ok=True)
 
-    cfg.input_path = Path(cfg.input_path)
-    cfg.input_file = cfg.input_path / (location + '.nc')
     
+    cfg.input_path = Path(cfg.input_path)
+    
+    if 'base_freq' in cfg:
+        cfg.input_file = cfg.input_path / (location + f'_{cfg.base_freq}.nc')
+    else:
+        cfg.input_file = cfg.input_path / (location + '.nc')
+
     cfg.location = location
     cfg.version = version
 
@@ -253,6 +260,7 @@ def train_wh(**kwargs):
     print(f'Num features {num_feat}')
 
     train(num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
+
 
 def train_hourly(model, cfg, load_stats=False, params_path=None, **kwargs):
     data = data_utils.load_nc(cfg.input_file)
@@ -272,12 +280,12 @@ def train_hourly(model, cfg, load_stats=False, params_path=None, **kwargs):
     train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
 
 
-def train_daily(model, load_stats=False, params_path=None, **kwargs):
-    # TODO: Fix with config file
+def train_multiscale(model, cfg, load_stats=False, params_path=None, **kwargs):
+    data = data_utils.load_nc(cfg.input_file)
 
-    data = data_utils.load_data()
-    
-    ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*4, load_stats=load_stats, is_wh=False, freq='D')
+    ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*3*24, load_stats=load_stats, 
+                                                  stats_path=cfg.stats_path, ds_cls=data_loader.PrecipitationDatasetMultiScale,
+                                                  avg_period=[1, 2, 4, 8, 16, 32])
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
     num_feat = len(ds_train[0][0])
@@ -287,13 +295,11 @@ def train_daily(model, load_stats=False, params_path=None, **kwargs):
         params = load_params(model, params_path, num_feat)
     else:
         params = None
-
-    train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, **kwargs)
-
-
+    
+    train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
 
 if __name__ == '__main__':
-    version = 'v7'
+    version = 'v9'
     loc = 'tarahills'
     cfg = get_config('base_hourly', version=version, location=loc)
     model, model_dict = get_model(version)
@@ -309,8 +315,8 @@ if __name__ == '__main__':
     bs = 256
     
     #params_path = '/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/v7/dunedin/params/params_022.data'
-    train_hourly(model=model, log=wandb.log, cfg=cfg, params_path=None, bs=bs)
-
+    train_multiscale(model=model, log=logger, cfg=cfg, params_path=None, bs=bs)
+    
     #train_daily(model=model, log=wandb.log, params_path=params_path, )
     #train_wh(model=model, log
     # =wandb.log)

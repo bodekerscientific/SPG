@@ -1,0 +1,11 @@
+model:
+    MixtureModel:
+        - Gamma
+        - GenPareto
+        - GenPareto
+nn:
+    transformer:
+        - Gamma
+        - Gamma
+        - Gamma
+

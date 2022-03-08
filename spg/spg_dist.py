@@ -19,19 +19,21 @@ tfd = tfp.distributions
 
 # jax.config.update("jax_debug_nans", True)
 
+
 def safe_log(x):
     return jnp.log(jnp.maximum(x, 1e-6))
+
 
 class FeedForward(nn.Module):
     mult: int = 4
     dropout: float = 0.5
-    features : int = 256
+    features: int = 256
 
     @nn.compact
     def __call__(self, x, deterministic=False):
         x = nn.Dense(self.features * self.mult)(x)
         x = nn.gelu(x)
-        # x = nn.Dropout(self.dropout,)(x, deterministic=deterministic)
+        x = nn.Dropout(self.dropout,)(x, deterministic=deterministic)
         x = nn.Dense(self.features)(x)
         return x
 
@@ -39,14 +41,14 @@ class FeedForward(nn.Module):
 class MLP(nn.Module):
     features: Sequence[int]
     act: Callable = nn.gelu
-    dtype : Any = jnp.float32
+    dtype: Any = jnp.float32
 
     @nn.compact
     def __call__(self, x, train=True):
         norm = partial(nn.LayerNorm,
-                epsilon=1e-4,
-                dtype=self.dtype)
-        
+                       epsilon=1e-4,
+                       dtype=self.dtype)
+
         for n, feat in enumerate(self.features[:-1]):
             x_n = FeedForward(features=feat)(x, deterministic=not train)
             # Skip connection
@@ -59,20 +61,43 @@ class MLP(nn.Module):
         x = nn.Dense(self.features[-1])(x)
         return x
 
+class MLPSimple(nn.Module):
+    features: Sequence[int]
+    act: Callable = nn.gelu
+    dtype: Any = jnp.float32
+    dropout : float = 0.5
+
+    @nn.compact
+    def __call__(self, x, train=True):
+        norm = partial(nn.LayerNorm,
+                       epsilon=1e-4,
+                       dtype=self.dtype)
+
+        for n, feat in enumerate(self.features[:-1]):
+            x = nn.Dense(feat)(x)
+            x = nn.gelu(x)
+            x = nn.Dropout(self.dropout,)(x,  deterministic=not train)
+            x = norm()(x)
+
+        x = nn.Dense(self.features[-1])(x)
+        return x
+
+        
 class Transformer(nn.Module):
     depth: int = 4
     n_latents: int = 64
     n_heads: int = 8
     head_features: int = 64
-    ff_mult : int = 4
-    num_out : int = 1
+    ff_mult: int = 4
+    num_out: int = 1
 
     @nn.compact
     def __call__(self, x, train=True):
         emb = self.param("emb", init.normal(stddev=1e-4), (x.shape[-1],))
         x = x + emb
-        
-        x = nn.Dense(self.n_latents*self.n_latents)(x).reshape(-1, self.n_latents, self.n_latents)
+
+        x = nn.Dense(self.n_latents*self.n_latents)(x).reshape(-1,
+                                                               self.n_latents, self.n_latents)
 
         attn = partial(
             nn.SelfAttention,
@@ -84,7 +109,8 @@ class Transformer(nn.Module):
             x += ReScale()(attn()(x))
             x += ReScale()(ff()(x))
 
-        return  nn.Dense(self.num_out)(x.reshape(-1))
+        return nn.Dense(self.num_out)(x.reshape(-1))
+
 
 class ReScale(nn.Module):
     @nn.compact
@@ -95,11 +121,12 @@ class ReScale(nn.Module):
 
 class BernoulliSPG(nn.Module):
     dist: Callable
-    mlp_hidden: Sequence[int] = (256,)*3
+    mlp_hidden: Sequence[int] = (256,)*4
     min_pr: int = 0.1
 
     def setup(self, ):
-        self.mlp = MLP(self.mlp_hidden+(2+self.dist.num_params,))#Transformer(num_out=2+self.dist.num_params)
+        # Transformer(num_out=2+self.dist.num_params)
+        self.mlp = MLP(self.mlp_hidden+(2+self.dist.num_params,))
 
     @nn.compact
     def __call__(self, x, rng, train=False):
@@ -137,7 +164,6 @@ class BernoulliSPG(nn.Module):
 
 
 class Dist():
-
     def __init__(self, tfp_dist, num_params, param_func=None):
         self.num_params = num_params
         self.dist = tfp_dist
@@ -161,14 +187,89 @@ class Dist():
         return self.dist(*params).quantile(prob)
 
 
-Gamma = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(p),  tfp_dist=tfd.Gamma)
+Gamma = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(
+    p),  tfp_dist=tfd.Gamma)
 
-Weibull = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(p), tfp_dist=tfd.Weibull)
+Weibull = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(
+    p), tfp_dist=tfd.Weibull)
+
 
 def gen_parto_func(params):
-    return jnp.asarray([0.0, jax_utils.pos_only(params[0]), jax_utils.pos_only(params[1])]) 
+    return jnp.asarray([0.0, jax_utils.pos_only(params[0]), jax_utils.pos_only(params[1])])
 
-GenPareto = partial(Dist, num_params=2, param_func=gen_parto_func, tfp_dist=tfd.GeneralizedPareto) 
+
+GenPareto = partial(Dist, num_params=2,
+                    param_func=gen_parto_func, tfp_dist=tfd.GeneralizedPareto)
+
+LogitNormal = partial(Dist, num_params=2, param_func=partial(jax_utils.apply_func_idx, idx=1), 
+                      tfp_dist=tfd.LogitNormal)
+
+
+class BernoulliLogitNormal(nn.Module):
+    mlp_hidden: Sequence[int] = (256,)*3
+    min_pr: int = 0.1
+
+    def setup(self, ):
+        self.dist = MixtureModel([LogitNormal(), LogitNormal()])
+        self.num_params = 3 + self.dist.num_params
+        self.mlp = MLP(self.mlp_hidden+(self.num_params,))
+    
+    @nn.compact
+    def __call__(self, x, rng, train=False):
+        return self.mlp(x, train=train)
+
+    def _split_params(self, params):
+        logit_params = params[0:3]
+        
+        # We encode a preference for selecting the dist
+        logit_params.at[1].set(logit_params[1] + 10.0)
+
+        return logit_params, params[3:]
+
+    def sample(self, x, rng, train=False):
+        dist_params = self.mlp(x, train=train)
+
+        logit_params, dist_params = self._split_params(dist_params)
+        p_l, p_m, _ = nn.softmax(logit_params)
+
+        rng, rng_rd = random.split(rng, num=2)
+        p_sel, p_dist = random.uniform(rng_rd, (2,), dtype=p_l.dtype)
+
+        def middle_cond():
+            return jax.lax.cond(
+                p_sel <= p_m + p_l,
+                lambda: self.dist.ppf(dist_params, p_dist),
+                lambda: jnp.zeros(1, dtype=p_l.dtype)[0]
+            )
+
+        return jax.lax.cond(
+            p_sel <= p_l,
+            lambda: jnp.ones(1, dtype=p_l.dtype)[0],
+            middle_cond
+        )
+
+    def log_prob(self, x, ratio, train=True):
+        dist_params = self.mlp(x, train=train)
+
+        logit_params, dist_params = self._split_params(dist_params)
+        p_l, p_m, p_r = nn.log_softmax(logit_params)
+
+        def middle_cond():
+            return jax.lax.cond(
+                ratio == 0.0,
+                lambda: p_r,
+                lambda: p_m + self.dist.log_prob(dist_params, ratio)
+            )
+
+        return jax.lax.cond(
+            ratio == 1.0,
+            lambda: p_l,
+            middle_cond
+        )
+
+
+def split_spg():
+    pass
 
 # class BernoulliDist():
 #     def sample(self, x, rng):
@@ -198,6 +299,7 @@ GenPareto = partial(Dist, num_params=2, param_func=gen_parto_func, tfp_dist=tfd.
 #             lambda: p_d,
 #             lambda: p_r + self.dist.log_prob(dist_params, y)
 #         )
+
 
 class MixtureModel():
     def __init__(self, dists):
@@ -254,6 +356,7 @@ class MixtureModel():
 
         prob = self._loop_dist_func(params, dist_func)
         return safe_log(prob)
+
 
 def gamma_mix(num_dists=2):
     return MixtureModel(dists=[Gamma() for _ in range(num_dists)])

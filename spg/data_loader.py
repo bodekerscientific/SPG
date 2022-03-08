@@ -100,39 +100,50 @@ def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], 
 
     return x[mask, :], y[mask]
 
-def generate_features_multiscale(pr, avg_period=[1, 2, 4, 8], cond_x=4, inc_doy=True, inc_tod=True, inc_tprime=True, rd_thresh=0.1):
+def generate_features_multiscale(pr, avg_period=[1, 2, 4, 8], inc_doy=True, inc_tod=True, inc_tprime=True, pr_freq='H', rd_thresh=0.1):
     output = defaultdict(list)
+    # Fill missing times with nan
+    pr = pr.resample(pr_freq).asfreq()
     pr_re_rd = (pr > rd_thresh).astype(np.float32)
 
     for av_hr, avg_hr_last in zip(avg_period[1:], avg_period[:-1]):
         pr_av = pr.rolling(av_hr).sum().values
-
+        
         pr_av_last = pr.rolling(avg_hr_last).sum().values
         x_rd = pr_re_rd.rolling(avg_hr_last).sum().values
 
         # Calculate the sum of N days of precipitation and rain days for the conditioning
-        x_rd = np.stack([x_rd[n:-cond_x+n] for n in range(cond_x)], axis=1)
-        x_pr = np.stack([pr_av_last[n:-cond_x+n] for n in range(cond_x)], axis=1)
-        x = np.concatenate([x_pr, x_rd], axis=1)
+        x = np.stack([pr_av_last, x_rd], axis=1)[:-av_hr, :]
 
-        pr_av = pr_av[cond_x:]
-        pr_av_last = pr_av_last[cond_x:]
+        pr_av = pr_av[av_hr:]
+        pr_av_last = pr_av_last[av_hr:]
 
+        pr_av[pr_av < 1e-3] = 0
+        pr_av_last[pr_av < 1e-3] = 0
+
+        assert ((pr_av + 1e-12 >= pr_av_last) | np.isnan(pr_av)).all()
+        
         ratio = pr_av_last/pr_av
         ratio[pr_av_last == 0.0] = 0.0 
-        ratio[pr_av == 0.0] = 0.5 
+        ratio[pr_av == 0.0] = 0.5
+        # Some values may be slightly above one due to rounding errors 
+        
+        ratio[ratio > 1.0] = 1.0
+        ratio[ratio < 0.0] = 0.0
 
-
-        mask = ~(np.isnan(pr_av) | np.isnan(x).any(axis=1) | np.isnan(ratio))
+        mask = ~(np.isnan(pr_av) | np.isnan(x).any(axis=1) | np.isnan(ratio) | (pr_av == 0))
         
         output['freq'].extend(np.full_like(ratio[mask], av_hr))
         output['x'].extend(x[mask, :])
         output['pr'].extend(pr_av[mask])
         output['ratio'].extend(ratio[mask])
 
-    return {k : np.stack(v) for k,v in output.items()}
+    output = {k : np.stack(v) for k,v in output.items()}
 
+    assert output['ratio'].min() == 0.0
+    assert output['ratio'].max() == 1.0
 
+    return output
 def calculate_stats(x, y):
     x_stats = {'mean' : np.mean(x, axis=0), 'std' : np.std(x, axis=0)}
     y_stats = {'mean' : np.array(0.0, dtype=np.float32), 'std' : np.std(y, axis=0)}
@@ -210,13 +221,32 @@ class PrecipitationDatasetWH(PrecipitationDataset):
             stats = calculate_stats(self.X, self.Y)
         self.stats = stats
 
-class PrecipitationDatasetMultiScale(Dataset):
-    def __init__(self, pr, stats=None, is_wh=False, **kwargs):
-        if is_wh:
-            pass
 
+class PrecipitationDatasetMultiScale(PrecipitationDataset):
+    def __init__(self, pr, stats=None, is_wh=False, stats_sample=5000, **kwargs):
+        self.data = generate_features_multiscale(pr)
+        self.stats = None
+        
+        if self.stats is None:
+            assert stats_sample <= len(self)
+            idxs = np.random.choice(len(self), size=stats_sample)
 
+            x = np.stack([self[n][0] for n in idxs], axis=0)
+            self.stats = {'x' : {'mean' : np.mean(x, axis=0), 'std' : np.std(x, axis=0)}}
 
+    def apply_tr(self, data):
+        if self.stats is None:
+            return data
+        else:
+            return apply_stats(self.stats['x'], data)
+ 
+    def __len__(self):
+        return len(self.data['ratio'])
+
+    def __getitem__(self, index):
+        data = {k : v[index] for k,v in self.data.items()} 
+        x = np.concatenate([data['x'], [data['freq']], [data['pr']]])
+        return self.apply_tr(x), data['ratio'] 
 
 @jax.jit
 def jax_batch(batch):
@@ -227,8 +257,8 @@ def jax_batch(batch):
 def get_scale(data, num_valid=10000):
     return data[0:-num_valid].values.std()
 
-def get_datasets(data, num_valid=10000, is_wh=False, stats_path='./stats.json', load_stats=False, **kwargs):
-
+def get_datasets(data, num_valid=10000, is_wh=False, stats_path='./stats.json', 
+                 load_stats=False, ds_cls=PrecipitationDataset, **kwargs):
     if is_wh:
         # for weather@home, we split the dataset by ens for each batch (3 runs in total)
         assert len(data) % 3 == 0
@@ -245,8 +275,6 @@ def get_datasets(data, num_valid=10000, is_wh=False, stats_path='./stats.json', 
         data_train = data[0:-num_valid]
         data_valid = data[-num_valid:]
 
-    ds_cls = PrecipitationDatasetWH if is_wh else PrecipitationDataset
-
     if load_stats:
         stats = open_stats(stats_path)
     else:
@@ -255,13 +283,15 @@ def get_datasets(data, num_valid=10000, is_wh=False, stats_path='./stats.json', 
     train_ds = ds_cls(data_train, stats=stats, **kwargs)
     valid_ds = ds_cls(data_valid, stats=train_ds.stats, **kwargs)
     
+    print(f'{len(train_ds)} items in the training dataset and {len(valid_ds)} items in the validation dataset')
+
     if not load_stats:
         save_stats(train_ds.stats, stats_path)
 
     return train_ds, valid_ds
 
-def get_data_loaders(train_ds, valid_ds, bs=128, **kwargs):
-    train_dataloader = DataLoader(train_ds, batch_size=bs, shuffle=True, collate_fn=jax_batch, **kwargs)
-    valid_dataloader = DataLoader(valid_ds, batch_size=bs, shuffle=False, collate_fn=jax_batch, **kwargs)
+def get_data_loaders(train_ds, valid_ds, bs=128, collate_fn=jax_batch, **kwargs):
+    train_dataloader = DataLoader(train_ds, batch_size=bs, shuffle=True, collate_fn=collate_fn, **kwargs)
+    valid_dataloader = DataLoader(valid_ds, batch_size=bs, shuffle=False, collate_fn=collate_fn, **kwargs)
 
     return train_dataloader, valid_dataloader
