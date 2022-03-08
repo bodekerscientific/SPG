@@ -6,6 +6,7 @@
     You might need to set, as TF and JAX will both try grab the full gpu memory.
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
 """
+from collections import defaultdict
 import os
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
@@ -219,6 +220,96 @@ def run_hourly():
     run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H', max_pr=max_pr)
 
 
+def run_spg_multi(data_av : pd.Series, params_path : Path, stats : dict, cfg, rng=None, base_freq=32, 
+                  output_freq='H', pr_thresh=0.1, use_tqdm=True, max_pr=100):
+    
+    data_av.values[data_av.values < 0.0] = 0.0
+
+    def get_x(last_pr, avg_pr, freq):
+        return jnp.stack([last_pr, last_pr > pr_thresh, avg_pr, freq])
+
+    get_x_norm = lambda *args : data_loader.apply_stats(stats['x'], get_x(*args))
+     
+
+    if rng is None:
+        rng = random.PRNGKey(np.random.randint(1e10))
+
+    new_idx = pd.date_range(start=data_av.index.min(), periods=len(data_av)*base_freq, freq=output_freq)
+    output = pd.Series(np.zeros(len(new_idx)), index=new_idx)
+
+    num_feat = len(get_x_norm(0.0, 0.0, base_freq))
+    last_pr = defaultdict(float)
+    
+    all_freq = []
+    freq = base_freq
+    while(freq > 1):
+        assert freq % 2 == 0
+        all_freq.append(freq)
+        freq = freq // 2
+
+    model, model_dict = train_spg.get_model(cfg.version)
+    print(model_dict)
+    params = train_spg.load_params(model, params_path, num_feat)
+    
+    @jax.jit
+    def sample_func(x, rng):
+        return model.apply(params, x, rng, method=model.sample)
+
+    n_range = range(len(data_av))
+    if use_tqdm:
+        n_range = tqdm(n_range)
+
+    #@jax.jit
+    def get_pr(pr, freq, rng):
+        x  = get_x_norm(last_pr[freq], pr, freq)
+
+        rng, sample_rng = random.split(rng)
+        ratio = sample_func(x, sample_rng)
+        
+        pr_l = ratio*pr
+        pr_r = pr*(1.0 - ratio)
+        last_pr[freq] = pr_r
+
+        if freq <= 2:
+            return jnp.stack([pr_l, pr_r]).astype(jnp.float32)
+        else:
+            return jnp.concatenate([get_pr(pr_l, freq//2, rng), get_pr(pr_r, freq//2, rng)])
+
+
+    for n in n_range:
+        rng, sample_rng = random.split(rng)
+        out = get_pr(data_av.values[n], base_freq, sample_rng)
+
+        assert out.shape[0] == base_freq
+        output.values[n*base_freq:(n+1)*base_freq] =  out
+
+    # Remove the real data and spin up period from the output
+    # output = output.iloc[spin_up_steps:]
+
+    return output
+
+
+def run_multiscale():
+    if len(sys.argv) == 4:
+        location = sys.argv[1]
+        version = sys.argv[2]
+        param_epoch = int(sys.argv[3])
+    else:
+        raise ValueError('You need to pass the run location, version and epoch number' \
+                          ' as an argument, e.g python spg/run.py dunedin v7 12')
+
+
+    print(f'Training {version} for {location} using epoch {param_epoch}')
+
+    cfg = train_spg.get_config('base_hourly', version, location, param_epoch)
+    data = data_utils.load_nc(cfg.input_file)
+
+    stats = data_loader.open_stats(cfg.stats_path)
+    param_path = get_params_path(cfg, param_epoch)
+
+    preds = run_spg_multi(data, param_path, stats=stats, cfg=cfg)
+    data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'))
+
 
 # def run_daily():
 #     # TODO: Update with config file
@@ -244,4 +335,4 @@ def run_hourly():
 #     run_pool(output_folder=output_path_ens, file_pre=fname_obs, **run_kwargs)
 
 if __name__ == '__main__':
-    run_hourly()
+    run_multiscale()
