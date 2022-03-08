@@ -82,21 +82,23 @@ if __name__ == '__main__':
 
     for loc_dir in (base_path / f'spg/ensemble_hourly/{version}/').iterdir():
         print(loc_dir)
-        loc = loc_dir.name
-        loc = loc.split('_epoch')[0]
+        loc_full = loc_dir.name
+        loc = loc_full.split('_epoch')[0]
         print(loc)
 
-        output_path = base_path / 'plots' / 'hist_plots' / loc
+        output_path = base_path / 'plots' / 'hist_plots' / version / loc_full
         output_path.mkdir(parents=True, exist_ok=True)
         
         obs_path = ens_path = base_path / f'spg/station_data_hourly/{loc}.nc'
         spg_path = loc_dir / f'{loc}.nc'
 
-        #%%
-        ds_obs = xr.open_dataset(obs_path).load()
-        ds_spg = xr.open_dataset(spg_path).load()
+        if obs_path.exists() and spg_path.exists():
+            ds_obs = xr.open_dataset(obs_path).load()
+            ds_spg = xr.open_dataset(spg_path).load()
 
-        make_plots(ds_obs, ds_spg, output_path)
+            make_plots(ds_obs, ds_spg, output_path)
 
-        make_plots(resample(ds_obs), resample(ds_spg), output_path, kind='daily')
+            make_plots(resample(ds_obs), resample(ds_spg), output_path, kind='daily')
+        else:
+            print(f'Skipping {loc_full} as cant find files')
 # %%
