@@ -130,22 +130,22 @@ for version in ['v7']:
 
     for loc_dir in (base_path / f'spg/ensemble_hourly/{version}/').iterdir():
         print(loc_dir)
-        loc = loc_dir.name
-        loc = loc.split('_epoch')[0]
+        loc_full = loc_dir.name
+        loc = loc_full.split('_epoch')[0]
         print(loc)
 
         obs_path = ens_path = base_path / f'spg/station_data_hourly/{loc.split("_epoch")[0]}.nc'
         wh_path = base_path / 'weather_at_home' / loc
         
-        output_path_loc = output_path / loc
-        output_path_loc.mkdir(exist_ok=True)
+        output_path_loc = output_path / version / loc_full
+        output_path_loc.mkdir(parents=True, exist_ok=True)
 
         ens_all = list(loc_dir.glob(f'{loc}_*.nc'))
         if len(ens_all) > 0:
             ds_ens = load_ds_bmax_mf(ens_all)
             
             fit_and_plot(ds_ens['tprime'].values.reshape(-1),
-                        ds_ens['precipitation'].values.reshape(-1), title=f'{version}_{loc}_hourly Annual Daily Maxima')
+                         ds_ens['precipitation'].values.reshape(-1), title=f'{version}_{loc}_hourly Annual Daily Maxima')
             show_and_save(output_path_loc / f'spg_hourly_{version}.png')
 
         obs_ds = xr.open_dataset(obs_path)

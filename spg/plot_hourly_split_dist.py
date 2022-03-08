@@ -36,9 +36,7 @@ for n in range(8):
     
     #plt.savefig(f'mean_difference_{n}.png')
     plt.show()
-
 #%%
 plt.plot(stds)
-# %%
-
+plt.plot(1.0/np.array(stds))
 # %%
