@@ -7,6 +7,11 @@ from bslibs.ncutils import get_attributes
 from pathlib import Path
 import random
 
+locations = {'dunedin' : (-44.526, 169.889),
+             'tauranga' : (-37.713386, 176.116161),
+             'christchurch' : (-43.487553, 172.534807)
+}
+
 @lru_cache
 def load_magic(target_path='data/magic_tprime_sh_land.csv'):
     return pd.read_csv(target_path, parse_dates=['date'], index_col='date')
@@ -65,7 +70,8 @@ def load_nc(input_path):
     with xr.open_dataset(input_path) as ds:
         return ds.load()['precipitation'].to_series()
 
-def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/dunedin/', 
+def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/',
+            location = 'dunedin',
             batches= ['batch_870_ant', 'batch_871_ant', 'batch_872_ant'], num_ens=400, spin_up_days=8,
             mult_factor=1.75) -> Iterable[pd.DataFrame]:
 
@@ -75,7 +81,7 @@ def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at
 
     out = []
     for batch in batches:
-        files = list((Path(base_path) / batch).glob('*.nc'))
+        files = list((Path(base_path) / location / batch).glob('*.nc'))
         random.shuffle(files)
         count = 0
         for f in files:
