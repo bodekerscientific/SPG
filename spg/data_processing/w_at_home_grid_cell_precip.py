@@ -5,6 +5,8 @@ import sys
 from bslibs import env
 import os
 
+from spg.data_utils import locations
+
 """ Script extracts rainfall values for given locations from weather at home ensembles """
 
 def euclidian_distance(lat1, lat2, lon1, lon2):
@@ -26,21 +28,21 @@ def get_closest(lat, lng, file_path_list):
 if __name__=="__main__":
 
     ensembles = ["batch_870_ant","batch_871_ant","batch_872_ant","batch_794_nat","batch_793_ant"] #Add to list 
-    latitude = -45.8741
-    longitude = 170.5035
-    out_path = "/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/dunedin"
+    
+    for loc, (latitude, longitude) in locations.items():
+        out_path = f"/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/{loc}"
 
-    if not os.path.exists(out_path):
-        os.mkdir(out_path)
+        if not os.path.exists(out_path):
+            os.mkdir(out_path)
 
-    for ens in ensembles: 
-        file_path_list = glob(os.path.join(env.datasets(''),'weatherathome','processed',ens,"*.nc"))
-        inds = get_closest(latitude,longitude,file_path_list) 
+        for ens in ensembles: 
+            file_path_list = glob(os.path.join(env.datasets(''),'weatherathome','processed',ens,"*.nc"))
+            inds = get_closest(latitude,longitude,file_path_list) 
 
-        if not os.path.exists(f"{out_path}/{ens}"):
-            os.mkdir(f"{out_path}/{ens}")
+            if not os.path.exists(f"{out_path}/{ens}"):
+                os.mkdir(f"{out_path}/{ens}")
 
-        for fl in file_path_list: 
-            with xr.open_dataset(fl) as ds: 
-                ds = ds.precipitation.isel(latitude0=inds[0],longitude0=inds[1])
-            ds.to_netcdf(f"{out_path}/{ens}/{fl.split('/')[-1]}")
+            for fl in file_path_list: 
+                with xr.open_dataset(fl) as ds: 
+                    ds = ds.precipitation.isel(latitude0=inds[0],longitude0=inds[1])
+                ds.to_netcdf(f"{out_path}/{ens}/{fl.split('/')[-1]}")
