@@ -11,18 +11,13 @@ import numpy as np
 import statsmodels.api as sm
 import pandas as pd
 
-from spg.data_utils import load_magic, load_wh, get_tprime_for_years
+from spg.data_utils import load_magic, load_wh, get_tprime_for_years, locations
 from spg.validation.data_sources import load_all_models
 from multiprocessing import Pool
 
 base_path = Path('/mnt/temp/projects/otago_uni_marsden/data_keep/')
 output_path = base_path / 'plots' / 'reg_plots'
 output_path.mkdir(parents=True, exist_ok=True)
-
-locations = {'dunedin' : (-44.526, 169.889),
-             'tauranga' : (-37.713386, 176.116161),
-             'christchurch' : (-43.487553, 172.534807)
-}
 
 
 def fit_and_plot(x, y, title, **kwargs):
