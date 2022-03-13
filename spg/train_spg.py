@@ -7,9 +7,10 @@
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
 """
 
-import yaml 
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = 'false'
+
+import yaml 
 from copy import deepcopy
 import matplotlib.pyplot as plt
 import matplotlib
@@ -26,11 +27,11 @@ from jax import random
 import numpy as np
 from ml_collections import ConfigDict
 from jax.experimental.host_callback import id_print
+import wandb
 
 from spg import data_loader, data_utils,  spg_dist
 from bslibs.plot.qqplot import qqplot
 
-import wandb
 
 
 # Global flag to set a specific platform, must be used at startup.
@@ -64,7 +65,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
     return output_path
 
 def get_opt(params, max_lr):
-    sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 200, 30000, 1e-5)
+    sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 200, 50000, 1e-5)
     opt = optax.adamw(sched, weight_decay=0.01)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
@@ -73,7 +74,7 @@ def get_opt(params, max_lr):
 
     return opt, opt_state, params
 
-def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_lr=1e-4, num_epochs=100, min_pr=0.1, bs=256):
+def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_lr=1e-4, num_epochs=100, min_pr=0.1):
     rng = random.PRNGKey(42**2)
     x = jnp.ones(( num_feat,), dtype=jnp.float32)
 
@@ -173,10 +174,12 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
 
         make_qq(preds, targets, epoch, log, output_folder=cfg.plot_path)
 
+
         # if epoch > 2 and val_loss < best_loss:
         #     best_loss = val_loss
         #     wandb.log_artifact( str(param_path), name='params_' + str(epoch).zfill(3), type='training_weights') 
 
+    return params.slow
 
 def load_params(model, path, num_feat): 
     x = jnp.zeros((num_feat,), dtype=jnp.float32)
@@ -201,7 +204,6 @@ def parse_model(model):
         raise ValueError(f'Invalid model {model}') 
     
 
-
 def get_model(version=None, path=None):
     assert not (path is None and version is None), 'You need to pass a path or a version of the model.'
     
@@ -214,10 +216,11 @@ def get_model(version=None, path=None):
     print(f'Model: {model_dict}')
         
     dist = parse_model(model_dict['model'])
-    return spg_dist.BernoulliLogitNormal(), model_dict
+    base_cls = getattr(spg_dist, model_dict['base_spg'])
+    return base_cls(dist), model_dict
 
 
-def get_config(name, version, location, ens=None):
+def get_config(name, version, location, ens=None, output_path=None):
     with open(Path('config/') / (name + '.yml'), 'r') as f:
         cfg = yaml.load(f, Loader=yaml.FullLoader)
         cfg = ConfigDict(cfg, type_safe=False)
@@ -226,7 +229,12 @@ def get_config(name, version, location, ens=None):
         cfg.ens_path = Path(cfg.ens_path) / version / f'{location}_epoch_{str(ens).zfill(3)}'
         cfg.ens_path.mkdir(parents=True, exist_ok=True)
 
+    # Optionally overwite output path
+    if output_path is not None:
+        cfg.output_path = output_path 
+        
     cfg.output_path = Path(cfg.output_path) / version / location 
+
     cfg.output_path.mkdir(parents=True, exist_ok=True)
     cfg.stats_path = cfg.output_path / 'stats.json'
     
@@ -238,49 +246,56 @@ def get_config(name, version, location, ens=None):
     
     cfg.input_path = Path(cfg.input_path)
     
-    if 'base_freq' in cfg:
-        cfg.input_file = cfg.input_path / (location + f'_{cfg.base_freq}.nc')
-    else:
-        cfg.input_file = cfg.input_path / (location + '.nc')
+    # if 'base_freq' in cfg:
+    #     cfg.input_file = cfg.input_path / (location + f'_{cfg.base_freq}.nc')
+    # else:
+    cfg.input_file = cfg.input_path / (location + '.nc')
 
     cfg.location = location
     cfg.version = version
 
     return cfg
 
-def train_wh(**kwargs):
+def train_wh(cfg, location, bs=256, load_stats=False, **kwargs):
     print('Loading weather@home')
-    wh_ens = data_utils.load_wh(num_ens=500)
+    wh_ens = data_utils.load_wh(location=location, num_ens=500)
     print(f'Loaded {len(wh_ens)} ens')
 
-    ds_train, ds_valid = data_loader.get_datasets(wh_ens, num_valid=50, is_wh=True)
+    ds_train, ds_valid = data_loader.get_datasets(wh_ens, num_valid=50, is_wh=True, ds_cls=data_loader.PrecipitationDatasetWH,
+                                                  stats_path=cfg.stats_path, load_stats=load_stats)
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
     num_feat = len(ds_train[0][0])
     print(f'Num features {num_feat}')
 
-    train(num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
+    train(cfg=cfg, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
 
 
-def train_hourly(model, cfg, load_stats=False, params_path=None, **kwargs):
+def train_obs(model, cfg, load_stats=False, params_path=None, freq='H', resample=32, bs=256, param_init=None, **kwargs):
     data = data_utils.load_nc(cfg.input_file)
 
-    ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*3*24, load_stats=load_stats, 
-                                                  stats_path=cfg.stats_path, freq='H')
+    if resample is not None:
+        assert freq == 'H'
+        freq = f'{resample}H'
+        data = data_utils.average(data, resample)
+
+    ds_train, ds_valid = data_loader.get_datasets(data, num_valid=cfg.num_valid, load_stats=load_stats,
+                                                  stats_path=cfg.stats_path, freq=freq, ds_cls=data_loader.PrecipitationDataset)
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
+    
     num_feat = len(ds_train[0][0])
     print(f'Num features {num_feat}')
-
+    
     if params_path is not None:
         params = load_params(model, params_path, num_feat)
     else:
-        params = None
+        params = param_init
 
     train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
 
 
-def train_multiscale(model, cfg, load_stats=False, params_path=None, **kwargs):
+def train_multiscale(model, cfg, load_stats=False, params_path=None, bs=256, **kwargs):
     data = data_utils.load_nc(cfg.input_file)
 
     ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*3*24, load_stats=load_stats, 
@@ -298,24 +313,65 @@ def train_multiscale(model, cfg, load_stats=False, params_path=None, **kwargs):
     
     train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
 
+def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20,
+                     output_path='/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/split/'):
+    # Train with w@h first then fine tune using obs.
+    
+    # Train the hourly splitter
+    print('Training hourly splitter -----')
+    version_split = version + '_split'
+    cfg_split = get_config('base_32H', version=version_split, location=loc, output_path=output_path)
+    model, model_dict = get_model(version_split)
+
+    wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_split, 'model_dict' : model})
+    logger = wandb.log
+    
+    train_multiscale(model, cfg_split, load_stats=load_stats,  bs=bs, log=logger, num_epochs=20, max_lr=1e-3)
+    wandb.finish()
+
+    # Load the 32H stats config
+    version_32H = version + '_32H'
+    cfg_32H = get_config('base_32H', version=version_32H, location=loc, output_path=output_path)
+
+    # Train wh
+    print('Training w@h -----')
+    version_wh = version + '_wh'
+    cfg_wh = get_config('base_32H', version=version_wh, location=loc, output_path=output_path)
+    model, model_dict = get_model(version + '_daily')
+
+    # Overwrite the stats path so we can resuse when we train the 32H version
+    cfg_wh.stats_path = cfg_32H.stats_path
+
+    wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_wh, 'model_dict' : model})
+    logger = wandb.log
+    
+    param_wh = train_wh(cfg_wh, loc.split('_')[0], model=model, load_stats=False,  bs=bs, num_epochs=wh_epochs,
+                        log=logger, max_lr=1e-3)
+    wandb.finish()
+
+    # Fine tune with obs
+    print('Fine tuning with obs')
+    wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_32H, 'model_dict' : model})
+    logger = wandb.log
+    
+    train_obs(model, cfg_32H, load_stats=True,  bs=bs, log=logger, max_lr=1e-4, num_epochs=20, param_init=param_wh)
+    wandb.finish()
+
 if __name__ == '__main__':
     version = 'v9'
-    loc = 'tarahills'
-    cfg = get_config('base_hourly', version=version, location=loc)
-    model, model_dict = get_model(version)
-
-    logging=True
-
-    if logging:
-        wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg, 'model_dict' : model})
-        logger = wandb.log
-    else:
-        logger = lambda *args : None
-
-    bs = 256
+    loc = 'tauranga'
+    wh_fine_tune_obs(loc, version=version)
     
-    #params_path = '/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/v7/dunedin/params/params_022.data'
-    train_multiscale(model=model, log=logger, cfg=cfg, params_path=None, bs=bs)
+    #bs = 256
+    #version_split = version + '_split'
+    #cfg = get_config('base_32H', version=version_split, location=loc, output_path=output_path)
+    #model, model_dict = get_model(version_split)
+    #wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg, 'model_dict' : model})
+    #logger = wandb.log
+    
+
+    #'/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/v7/dunedin/params/params_022.data'
+    #train_obs(model=model, log=logger, cfg=cfg, bs=bs, resample=32, load_stats=True)
     
     #train_daily(model=model, log=wandb.log, params_path=params_path, )
     #train_wh(model=model, log
@@ -324,7 +380,6 @@ if __name__ == '__main__':
     # rng = random.PRNGKey(42)
     # y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0]).astype(jnp.float32)
     # x = y[:, None]
-
-    # variables = model.init(random.PRNGKey(0), x, rng)
     
+    # variables = model.init(random.PRNGKey(0), x, rng)    
     # probs = model.apply(variables, x, y, method=model.log_prob)
