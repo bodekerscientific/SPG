@@ -16,6 +16,12 @@ locations = {'dunedin' : (-44.526, 169.889),
 def load_magic(target_path='data/magic_tprime_sh_land.csv'):
     return pd.read_csv(target_path, parse_dates=['date'], index_col='date')
 
+def average(pr, num_hrs=32, freq='H'):
+    pr = pr.resample(freq).asfreq()
+    pr = pr.rolling(num_hrs).sum()[::num_hrs]
+    pr = pr.dropna()
+    return pr
+
 def get_tprime_for_times(dates, tprime_df):
     dates = pd.DatetimeIndex(dates)
     years = dates.year
@@ -29,6 +35,7 @@ def save_nc_tprime(data, output_path,  units='mm/hr', sce='ssp245'):
     df_magic = load_magic()
     t_prime = get_tprime_for_times(data.index, df_magic[sce])
     make_nc(data, output_path, tprime=t_prime, units=units)
+
 
 def make_nc(data, output_path, tprime=None, units='mm/day'):
     da = xr.DataArray.from_series(data)
