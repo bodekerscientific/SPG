@@ -100,7 +100,7 @@ def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], 
 
     return x[mask, :], y[mask]
 
-def generate_features_multiscale(pr, avg_period=[1, 2, 4, 8], inc_doy=True, inc_tod=True, inc_tprime=True, pr_freq='H', rd_thresh=0.1):
+def generate_features_multiscale(pr, avg_period=[1, 2, 4, 8], pr_freq='H', rd_thresh=0.1):
     output = defaultdict(list)
     # Fill missing times with nan
     pr = pr.resample(pr_freq).asfreq()
@@ -177,9 +177,9 @@ def inverse_stats(stats, data):
 
 class PrecipitationDataset(Dataset):
     def __init__(self, pr : pd.Series, stats=None, freq='H'):
-        assert freq in ['H', 'D'], 'Only hourly or daily data supported'
+        #assert freq in ['H', 'D'], 'Only hourly or daily data supported'
 
-        pr_re = pr.resample(freq).asfreq()
+        pr_re = pr.resample(freq, origin='start').asfreq()
         print(f' {(pr_re.isna().sum() / pr_re.size)*100:.2f}% of the values are missing.')
         
         self.X, self.Y = generate_features(pr_re,) if freq == 'H' else generate_features_daily(pr_re)
