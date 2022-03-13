@@ -206,11 +206,11 @@ LogitNormal = partial(Dist, num_params=2, param_func=partial(jax_utils.apply_fun
 
 
 class BernoulliLogitNormal(nn.Module):
+    dist: Callable
     mlp_hidden: Sequence[int] = (256,)*3
     min_pr: int = 0.1
 
     def setup(self, ):
-        self.dist = MixtureModel([LogitNormal(), LogitNormal()])
         self.num_params = 3 + self.dist.num_params
         self.mlp = MLP(self.mlp_hidden+(self.num_params,))
     
@@ -266,39 +266,6 @@ class BernoulliLogitNormal(nn.Module):
             lambda: p_l,
             middle_cond
         )
-
-
-def split_spg():
-    pass
-
-# class BernoulliDist():
-#     def sample(self, x, rng):
-#         dist_params = self.mlp(x)
-
-#         logit_params, dist_params = self._split_params(dist_params)
-#         p_d, _ = nn.softmax(logit_params)
-
-#         rng, rng_rd = random.split(rng, num=2)
-#         p_rain, p_dist = random.uniform(rng_rd, (2,), dtype=x.dtype)
-
-#         return jax.lax.cond(
-#             p_rain <= p_d,
-#             lambda: jnp.zeros(1, dtype=x.dtype)[0],
-#             lambda: self.dist.ppf(dist_params, p_dist)
-#         )
-
-#     def log_prob(self, x, y):
-
-#         dist_params = self.mlp(x)
-
-#         logit_params, dist_params = self._split_params(dist_params)
-#         p_d, p_r = nn.log_softmax(logit_params)
-
-#         return jax.lax.cond(
-#             y <= self.min_pr,
-#             lambda: p_d,
-#             lambda: p_r + self.dist.log_prob(dist_params, y)
-#         )
 
 
 class MixtureModel():
