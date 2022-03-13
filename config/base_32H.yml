@@ -1,7 +1,9 @@
 output_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/
 input_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hourly/
-ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly_split/
+ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_32H/
+base_freq : 32
 num_ens : 8
+num_valid : 1000
 
 max_values :
   dunedin : 40

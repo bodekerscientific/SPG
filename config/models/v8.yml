@@ -5,3 +5,5 @@ model:
         - GenPareto
         - GenPareto
 
+base_spg: BernoulliSPG
+

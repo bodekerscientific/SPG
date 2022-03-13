@@ -3,4 +3,5 @@ model:
         - Gamma
         - GenPareto
         - GenPareto
-
+        
+base_spg: BernoulliSPG
