@@ -94,15 +94,18 @@ def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-
 
     return pd.Series(predictions, index=times)
 
-
-def test_fit(data, **kwargs):
-    sp = fit_spg(data)
-    preds = gen_preds(sp, data, start_date='1950-1-1', end_date='1980-1-1', **kwargs)
-    print(preds)
  
-def setup_output(data, feat_samples, start_date, end_date, spin_up_steps=1000, freq='H'):
-    pr_re = data.resample(freq).asfreq()
-    dts = pd.date_range(start=start_date - pd.Timedelta(spin_up_steps, unit=freq,), end=end_date, freq=freq)
+def setup_output(data, feat_samples, start_date, end_date, spin_up_steps=100, freq='H'):
+    pr_re = data.resample(freq, origin='start').asfreq()
+    
+    if len(freq) > 1:
+        assert 'H' in freq
+        count = int(''.join([d for d in freq if d.isdigit()]))
+    else:
+        count = 1
+        
+    
+    dts = pd.date_range(start=start_date - pd.Timedelta(spin_up_steps*count, unit='H',), end=end_date, freq=freq)
     
     # Find the first index where we get non nan values
     idx_valid = np.where(~np.isnan(pr_re.rolling(feat_samples+1).mean().values))[0][0]
@@ -116,10 +119,10 @@ def setup_output(data, feat_samples, start_date, end_date, spin_up_steps=1000, f
 def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_samples = 6*24, spin_up_steps=1000, 
                 start_date=None, end_date=None, rng=None, sce='ssp245', use_tqdm=True, freq='H', max_pr=100):
 
-    assert freq in ['H', 'D'], 'Only hourly and daily SPGs are supported at this time.'
+    #assert freq in ['H', 'D'], 'Only hourly and daily SPGs are supported at this time.'
     
     feat_func =  data_loader.generate_features if freq == 'H' else data_loader.generate_features_daily
-    feat_func_norm = lambda x : data_loader.apply_stats(stats['x'], feat_func(x, sce=sce)[0])
+    feat_func_norm = lambda x : data_loader.apply_stats(stats['x'], feat_func(x, sce=sce)[0], )
 
     if rng is None:
         rng = random.PRNGKey(np.random.randint(1e10))
@@ -177,7 +180,7 @@ def run_save_proj(ens_args, cfg, data : pd.Series, params_path : Path,
     preds = run_spg_mlp(data, params_path, start_date=start_date, end_date=end_date, rng=rng, freq=freq, cfg=cfg, **kwargs)
 
     output_path = cfg.ens_path / f'{cfg.location}_{sce}_{str(ens_num).zfill(3)}.nc'    
-    data_utils.save_nc_tprime(preds, output_path, sce=sce, units='mm/hr' if freq == 'H' else 'mm/day')
+    data_utils.save_nc_tprime(preds, output_path, sce=sce, units='mm/hr' if freq == 'H' else f'mm/{freq}')
 
 
 def run_pool(cfg, **kwargs):
@@ -192,32 +195,6 @@ def run_pool(cfg, **kwargs):
 
 def get_params_path(cfg, epoch):
     return cfg.param_path / f'params_{str(epoch).zfill(3)}.data'
-
-
-def run_hourly():
-    if len(sys.argv) == 4:
-        location = sys.argv[1]
-        version = sys.argv[2]
-        param_epoch = int(sys.argv[3])
-    else:
-        raise ValueError('You need to pass the run location, version and epoch number' \
-                          ' as an argument, e.g python spg/run.py dunedin v7 12')
-
-
-    print(f'Training {version} for {location} using epoch {param_epoch}')
-
-    cfg = train_spg.get_config('base_hourly', version, location, param_epoch)
-    data = data_utils.load_nc(cfg.input_file)
-    print(cfg)
-    max_pr = cfg['max_values'][location]
-
-    stats = data_loader.open_stats(cfg.stats_path)
-    param_path = get_params_path(cfg, param_epoch)
-
-    preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, freq='H', max_pr=max_pr)
-    data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'))
-
-    run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H', max_pr=max_pr)
 
 
 def run_spg_multi(data_av : pd.Series, params_path : Path, stats : dict, cfg, rng=None, base_freq=32, 
@@ -288,8 +265,7 @@ def run_spg_multi(data_av : pd.Series, params_path : Path, stats : dict, cfg, rn
 
     return output
 
-
-def run_multiscale():
+def run_hourly():
     if len(sys.argv) == 4:
         location = sys.argv[1]
         version = sys.argv[2]
@@ -303,13 +279,70 @@ def run_multiscale():
 
     cfg = train_spg.get_config('base_hourly', version, location, param_epoch)
     data = data_utils.load_nc(cfg.input_file)
+    print(cfg)
+    max_pr = cfg['max_values'][location]
 
     stats = data_loader.open_stats(cfg.stats_path)
     param_path = get_params_path(cfg, param_epoch)
 
-    preds = run_spg_multi(data, param_path, stats=stats, cfg=cfg)
+    preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, freq='H', max_pr=max_pr)
     data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'))
 
+    run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H', max_pr=max_pr)
+
+def run_save_split(ens_args, cfg, params_path : Path, stats, **kwargs):
+    fname, idx = ens_args
+    print(f'Processing {fname}')
+    
+    data = data_utils.load_nc(fname)
+    rng = random.PRNGKey(seed=901*(int(idx)+42))
+    sce = fname.name.split('_')[-2]
+
+    output_path = cfg.ens_path /  fname.name
+    print(f'Saving to {output_path}, {sce}')
+    
+    preds = run_spg_multi(data, params_path, stats=stats, cfg=cfg, rng=rng)
+    data_utils.save_nc_tprime(preds, output_path, units='mm/hr', sce=sce, **kwargs)
+
+def run_multiscale():
+    if len(sys.argv) == 5:
+        location = sys.argv[1]
+        version = sys.argv[2]
+        param_epoch_split = int(sys.argv[3])
+        param_epoch_32H = int(sys.argv[4])
+    else:
+        raise ValueError('You need to pass the run location, version and epoch number for the splitter then the hourly dataset' \
+                          ' as an argument, e.g python spg/run.py dunedin v7 12 2')
+
+
+    print(f'Training {version} for {location} using epoch {param_epoch_split} for split and {param_epoch_32H} for 24HR of precip')
+
+    # Run the 32 hour spg.
+    cfg = train_spg.get_config('base_32H', version +'_32H', location, ens=param_epoch_32H)
+    data = data_utils.load_nc(cfg.input_file)
+    
+    max_pr = cfg['max_values'][location]
+    stats = data_loader.open_stats(cfg.stats_path)
+    
+    param_path = get_params_path(cfg, param_epoch_32H)
+    preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, freq='32H', max_pr=max_pr)
+    
+    data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'), units='mm/32H')
+    run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='32H', max_pr=max_pr)
+
+    # Run the splitter
+    cfg_split = train_spg.get_config('base_32H', version +'_split', location, ens=param_epoch_split)
+    stats = data_loader.open_stats(cfg_split.stats_path)
+    param_path = get_params_path(cfg_split, param_epoch_split)
+        
+    ens = list(Path(cfg.ens_path).glob('*.nc')) 
+    idxs = np.arange(len(ens))
+    ens = np.stack([np.array(ens), idxs], axis=1)
+
+    print(f'Running {len(ens)} scenarios')
+
+    with get_context('spawn').Pool(N_CPU) as p:
+        p.map(partial(run_save_split, stats=stats, params_path=param_path, use_tqdm=True, cfg=cfg_split,), ens)
 
 # def run_daily():
 #     # TODO: Update with config file
