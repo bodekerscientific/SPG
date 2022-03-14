@@ -279,7 +279,7 @@ def run_spg_multi(data_av : pd.Series, params_path : Path, stats : dict, cfg, rn
     for n in n_range:
         rng, sample_rng = random.split(rng)
         out = get_pr(data_av.values[n], base_freq, sample_rng)
-
+        
         assert out.shape[0] == base_freq
         output.values[n*base_freq:(n+1)*base_freq] =  out
 

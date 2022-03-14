@@ -80,7 +80,7 @@ def load_nc(input_path):
 def load_wh(base_path='/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/',
             location = 'dunedin',
             batches= ['batch_870_ant', 'batch_871_ant', 'batch_872_ant'], num_ens=400, spin_up_days=8,
-            mult_factor=1.75) -> Iterable[pd.DataFrame]:
+            mult_factor=1.00) -> Iterable[pd.DataFrame]:
 
     batches_tprime = {'batch_870_ant' : 1.5, 'batch_871_ant' : 2.0, 'batch_872_ant' : 3.0}
 

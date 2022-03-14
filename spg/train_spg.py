@@ -10,6 +10,7 @@
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = 'false'
 
+import sys
 import yaml 
 from copy import deepcopy
 import matplotlib.pyplot as plt
@@ -66,7 +67,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
 
 def get_opt(params, max_lr):
     sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 200, 50000, 1e-5)
-    opt = optax.adamw(sched, weight_decay=0.01)
+    opt = optax.adamw(sched, weight_decay=0.1)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
     opt = optax.lookahead(opt, 5, 0.5)
@@ -313,21 +314,22 @@ def train_multiscale(model, cfg, load_stats=False, params_path=None, bs=256, **k
     
     train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
 
-def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20,
+def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20, train_split=False,
                      output_path='/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/split/'):
     # Train with w@h first then fine tune using obs.
     
     # Train the hourly splitter
-    print('Training hourly splitter -----')
-    version_split = version + '_split'
-    cfg_split = get_config('base_32H', version=version_split, location=loc, output_path=output_path)
-    model, model_dict = get_model(version_split)
+    if train_split:
+        print('Training hourly splitter -----')
+        version_split = version + '_split'
+        cfg_split = get_config('base_32H', version=version_split, location=loc, output_path=output_path)
+        model, model_dict = get_model(version_split)
 
-    wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_split, 'model_dict' : model})
-    logger = wandb.log
-    
-    train_multiscale(model, cfg_split, load_stats=load_stats,  bs=bs, log=logger, num_epochs=20, max_lr=1e-3)
-    wandb.finish()
+        wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_split, 'model_dict' : model})
+        logger = wandb.log
+        
+        train_multiscale(model, cfg_split, load_stats=load_stats,  bs=bs, log=logger, num_epochs=20, max_lr=1e-3)
+        wandb.finish()
 
     # Load the 32H stats config
     version_32H = version + '_32H'
@@ -358,9 +360,13 @@ def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20,
     wandb.finish()
 
 if __name__ == '__main__':
-    version = 'v9'
-    loc = 'tauranga'
-    wh_fine_tune_obs(loc, version=version)
+    if len(sys.argv) == 3:
+        location = sys.argv[1]
+        version = sys.argv[2]
+    else:
+        raise ValueError('You need to pass the run location, version and epoch number' \
+                          ' as an argument, e.g python spg/train_spg.py dunedin v7')
+    wh_fine_tune_obs(location, version=version)
     
     #bs = 256
     #version_split = version + '_split'
