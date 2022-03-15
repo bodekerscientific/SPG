@@ -7,7 +7,7 @@ from bslibs.ncutils import get_attributes
 from pathlib import Path
 import random
 
-locations = {'dunedin' : (-44.526, 169.889),
+locations = {'dunedin' : (-45.879224, 170.502686),
              'tauranga' : (-37.713386, 176.116161),
              'christchurch' : (-43.487553, 172.534807)
 }
