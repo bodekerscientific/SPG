@@ -68,7 +68,7 @@ def make_plots(ds_obs, ds_spg, output_path, kind='hourly'):
     plot(ds_obs['precipitation'].values, ds_spg['precipitation'].values, 
         f'{kind} Precipitation'.title())
     plt.tight_layout()
-    plt.savefig(output_path / f'hist_{kind}.png',dpi=200, tight_layout=True)
+    plt.savefig(output_path / f'hist_{kind}.png',dpi=200)
     plt.show()
 
     plot(calc_bmax(ds_obs)['precipitation'].values, calc_bmax(ds_spg)['precipitation'].values, 
@@ -78,9 +78,9 @@ def make_plots(ds_obs, ds_spg, output_path, kind='hourly'):
     plt.show()
 
 if __name__ == '__main__':
-    version = 'v7'
+    version = 'v9_split'
 
-    for loc_dir in (base_path / f'spg/ensemble_hourly/{version}/').iterdir():
+    for loc_dir in (base_path / f'spg/ensemble_split/{version}/').iterdir():
         print(loc_dir)
         loc_full = loc_dir.name
         loc = loc_full.split('_epoch')[0]

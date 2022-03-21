@@ -121,9 +121,9 @@ def show_and_save(path=None):
     plt.show()
 
 #%%
-for version in ['v7']:
+for version in ['v9_split']:
 
-    for loc_dir in (base_path / f'spg/ensemble_hourly/{version}/').iterdir():
+    for loc_dir in (base_path / f'spg/ensemble_split/{version}/').iterdir():
         print(loc_dir)
         loc_full = loc_dir.name
         loc = loc_full.split('_epoch')[0]
@@ -150,25 +150,24 @@ for version in ['v7']:
         if ['tprime'] in obs_ds:
             fit_and_plot(obs_ds['tprime'].values, obs_ds['precipitation'].values, f'{version}_{loc}_Observations Annual Daily Maxima')
             show_and_save(output_path_loc / 'obs.png')
-
-
+#%%
+rcm_output.keys()
 #%%
 for loc in locations:
-    output_path_loc = output_path / loc
-
     for model in rcm_output[loc]['model'].unique():
-        subset = rcm_output[rcm_output[loc]['model'] == model]
+        subset = rcm_output[loc].iloc[rcm_output[loc]['model'].values == model]
         fit_and_plot(subset['tprime'].values, subset['precipitation'].values, f'RCM {model} {loc}')
         show_and_save(output_path / f'rcm_{loc}_{model}.png')
-
-
-
+        
 #%%
-wh_all = load_wh(num_ens=500)
-wh_bmax = pd.DataFrame([wh.max() for wh in wh_all])
+locations
+#%%
+for loc in locations:
+    wh_all = load_wh(location=loc, num_ens=500)
+    wh_bmax = pd.DataFrame([wh.max() for wh in wh_all])
 
-fit_and_plot(wh_bmax['tp'].values, wh_bmax['pr'].values, f'wether@home Annual Daily Maxima')
-show_and_save(output_path / 'wh.png')
+    fit_and_plot(wh_bmax['tp'].values, wh_bmax['pr'].values, f'wether@home Annual Daily Maxima {loc}')
+    show_and_save(output_path / f'wh_{loc}.png')
 
 #%%
 obs_ds = xr.open_dataset(obs_path)
