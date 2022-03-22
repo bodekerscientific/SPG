@@ -176,13 +176,13 @@ def inverse_stats(stats, data):
     return data*stats['std'] + stats['mean']
 
 class PrecipitationDataset(Dataset):
-    def __init__(self, pr : pd.Series, stats=None, freq='H'):
+    def __init__(self, pr : pd.Series, stats=None, freq='H', **kwargs):
         #assert freq in ['H', 'D'], 'Only hourly or daily data supported'
 
         pr_re = pr.resample(freq, origin='start').asfreq()
         print(f' {(pr_re.isna().sum() / pr_re.size)*100:.2f}% of the values are missing.')
         
-        self.X, self.Y = generate_features(pr_re,) if freq == 'H' else generate_features_daily(pr_re)
+        self.X, self.Y = generate_features(pr_re, **kwargs) if freq == 'H' else generate_features_daily(pr_re, **kwargs)
         print(f'{(len(self.Y)/len(pr_re))*100:.2f}% of the values are valid after taking calculating the averages')
 
         if stats is None:

@@ -218,6 +218,7 @@ def get_model(version=None, path=None):
         
     dist = parse_model(model_dict['model'])
     base_cls = getattr(spg_dist, model_dict['base_spg'])
+    
     return base_cls(dist), model_dict
 
 
@@ -257,9 +258,11 @@ def get_config(name, version, location, ens=None, output_path=None):
 
     return cfg
 
-def train_wh(cfg, location, bs=256, load_stats=False, **kwargs):
+def train_wh(cfg, location, bs=256, load_stats=False, data_obs=None, **kwargs):
     print('Loading weather@home')
-    wh_ens = data_utils.load_wh(location=location, num_ens=500)
+    
+    wh_ens = data_utils.load_wh(location=location, num_ens=500, data_obs=data_obs)
+    
     print(f'Loaded {len(wh_ens)} ens')
 
     ds_train, ds_valid = data_loader.get_datasets(wh_ens, num_valid=50, is_wh=True, ds_cls=data_loader.PrecipitationDatasetWH,
@@ -272,7 +275,7 @@ def train_wh(cfg, location, bs=256, load_stats=False, **kwargs):
     train(cfg=cfg, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
 
 
-def train_obs(model, cfg, load_stats=False, params_path=None, freq='H', resample=32, bs=256, param_init=None, **kwargs):
+def train_obs(model, cfg, load_stats=False, params_path=None, freq='H', resample=32, bs=256, param_init=None, ds_kwargs = {}, **kwargs):
     data = data_utils.load_nc(cfg.input_file)
 
     if resample is not None:
@@ -280,8 +283,8 @@ def train_obs(model, cfg, load_stats=False, params_path=None, freq='H', resample
         freq = f'{resample}H'
         data = data_utils.average(data, resample)
 
-    ds_train, ds_valid = data_loader.get_datasets(data, num_valid=cfg.num_valid, load_stats=load_stats,
-                                                  stats_path=cfg.stats_path, freq=freq, ds_cls=data_loader.PrecipitationDataset)
+    ds_train, ds_valid = data_loader.get_datasets(data, num_valid=cfg.num_valid, load_stats=load_stats, stats_path=cfg.stats_path, 
+                                                  freq=freq, ds_cls=data_loader.PrecipitationDataset, **ds_kwargs)
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
     
@@ -330,34 +333,34 @@ def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20, train
         
         train_multiscale(model, cfg_split, load_stats=load_stats,  bs=bs, log=logger, num_epochs=20, max_lr=1e-3)
         wandb.finish()
+    else:
+        #Load the 32H stats config
+        version_32H = version + '_32H'
+        cfg_32H = get_config('base_32H', version=version_32H, location=loc, output_path=output_path)
 
-    # Load the 32H stats config
-    version_32H = version + '_32H'
-    cfg_32H = get_config('base_32H', version=version_32H, location=loc, output_path=output_path)
+        # Train wh
+        print('Training w@h -----')
+        version_wh = version + '_wh'
+        cfg_wh = get_config('base_32H', version=version_wh, location=loc, output_path=output_path)
+        model, model_dict = get_model(version + '_daily')
 
-    # Train wh
-    print('Training w@h -----')
-    version_wh = version + '_wh'
-    cfg_wh = get_config('base_32H', version=version_wh, location=loc, output_path=output_path)
-    model, model_dict = get_model(version + '_daily')
+        # Overwrite the stats path so we can resuse when we train the 32H version
+        cfg_wh.stats_path = cfg_32H.stats_path
 
-    # Overwrite the stats path so we can resuse when we train the 32H version
-    cfg_wh.stats_path = cfg_32H.stats_path
+        wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_wh, 'model_dict' : model})
+        logger = wandb.log
 
-    wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_wh, 'model_dict' : model})
-    logger = wandb.log
-    
-    param_wh = train_wh(cfg_wh, loc.split('_')[0], model=model, load_stats=False,  bs=bs, num_epochs=wh_epochs,
-                        log=logger, max_lr=1e-3)
-    wandb.finish()
+        param_wh = train_wh(cfg_wh, loc.split('_')[0], model=model, load_stats=False,  bs=bs, num_epochs=wh_epochs,
+                            log=logger, max_lr=1e-3)
+        wandb.finish()
 
-    # Fine tune with obs
-    print('Fine tuning with obs')
-    wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_32H, 'model_dict' : model})
-    logger = wandb.log
-    
-    train_obs(model, cfg_32H, load_stats=True,  bs=bs, log=logger, max_lr=1e-4, num_epochs=20, param_init=param_wh)
-    wandb.finish()
+        # Fine tune with obs
+        print('Fine tuning with obs')
+        wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_32H, 'model_dict' : model})
+        logger = wandb.log
+        
+        train_obs(model, cfg_32H, load_stats=True,  bs=bs, log=logger, max_lr=1e-4, num_epochs=20, param_init=param_wh)
+        wandb.finish()
 
 if __name__ == '__main__':
     if len(sys.argv) == 3:
@@ -370,14 +373,15 @@ if __name__ == '__main__':
     
     #bs = 256
     #version_split = version + '_split'
-    #cfg = get_config('base_32H', version=version_split, location=loc, output_path=output_path)
-    #model, model_dict = get_model(version_split)
-    #wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg, 'model_dict' : model})
-    #logger = wandb.log
     
-
-    #'/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/v7/dunedin/params/params_022.data'
-    #train_obs(model=model, log=logger, cfg=cfg, bs=bs, resample=32, load_stats=True)
+    # cfg = get_config('base_hourly', version=version, location=location)
+    # model, model_dict = get_model(version)
+    # wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg, 'model_dict' : model})
+    # logger = wandb.log
+    
+    # print(model_dict['loader_args'])
+    # #'/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/v7/dunedin/params/params_022.data'
+    # train_obs(model=model, log=logger, cfg=cfg, resample=None, load_stats=False, ds_kwargs = model_dict['loader_args'])
     
     #train_daily(model=model, log=wandb.log, params_path=params_path, )
     #train_wh(model=model, log

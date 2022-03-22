@@ -11,7 +11,6 @@ import os
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
-
 import sys
 from datetime import datetime
 from bslibs.plot.qqplot import qqplot
@@ -30,13 +29,11 @@ from itertools import product
 import numpy as np
 from jax.experimental.host_callback import id_print
 
-
 import flax
 from tqdm import tqdm
 import jax
 
-N_CPU = 8
-
+N_CPU = 24
 
 def cond_func(values, last_cond):
     rain = values[-1]
@@ -120,9 +117,13 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_sa
                 start_date=None, end_date=None, rng=None, sce='ssp245', use_tqdm=True, freq='H', max_pr=100):
 
     #assert freq in ['H', 'D'], 'Only hourly and daily SPGs are supported at this time.'
+    model, model_dict = train_spg.get_model(cfg.version)
+
     
     feat_func =  data_loader.generate_features if freq == 'H' else data_loader.generate_features_daily
-    feat_func_norm = lambda x : data_loader.apply_stats(stats['x'], feat_func(x, sce=sce)[0], )
+    feat_func = partial(feat_func, **model_dict['loader_args'])
+    
+    feat_func_norm = lambda x : data_loader.apply_stats(stats['x'], feat_func(x, sce=sce)[0],)
 
     if rng is None:
         rng = random.PRNGKey(np.random.randint(1e10))
@@ -134,8 +135,6 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_sa
     output = setup_output(data, feat_samples, start_date, end_date, spin_up_steps=spin_up_steps, freq=freq)
 
     num_feat = feat_func_norm(output.iloc[0:feat_samples+1]).shape[1]
-    model, model_dict = train_spg.get_model(cfg.version)
-    print(model_dict)
     params = train_spg.load_params(model, params_path, num_feat)
     
     @jax.jit
@@ -296,13 +295,22 @@ def run_save_split(ens_args, cfg, params_path : Path, stats, **kwargs):
     
     data = data_utils.load_nc(fname)
     rng = random.PRNGKey(seed=901*(int(idx)+42))
-    sce = fname.name.split('_')[-2]
-
+    fname_split = fname.name.split('_')
+    
+    if len(fname_split) >= 2:
+        sce = fname_split[-2]
+    else:
+        print(f"Using default scenario")
+        sce = 'rcp26'
+    if sce not in cfg.scenarios:
+        print(f"Can't find {sce} in scenarios")
+        sce = 'rcp26'
+    
+    preds = run_spg_multi(data, params_path, stats=stats, cfg=cfg, rng=rng, **kwargs)
+    
     output_path = cfg.ens_path /  fname.name
     print(f'Saving to {output_path}, {sce}')
-    
-    preds = run_spg_multi(data, params_path, stats=stats, cfg=cfg, rng=rng)
-    data_utils.save_nc_tprime(preds, output_path, units='mm/hr', sce=sce, **kwargs)
+    data_utils.save_nc_tprime(preds, output_path, units='mm/hr', sce=sce)
 
 def run_multiscale():
     if len(sys.argv) == 5:
@@ -319,23 +327,23 @@ def run_multiscale():
 
     # Run the 32 hour spg.
     cfg = train_spg.get_config('base_32H', version +'_32H', location, ens=param_epoch_32H)
-    data = data_utils.load_nc(cfg.input_file)
+    # data = data_utils.load_nc(cfg.input_file)
     
-    max_pr = cfg['max_values'][location]
-    stats = data_loader.open_stats(cfg.stats_path)
+    # max_pr = cfg['max_values'][location]
+    # stats = data_loader.open_stats(cfg.stats_path)
     
-    param_path = get_params_path(cfg, param_epoch_32H)
-    preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, freq='32H', max_pr=max_pr)
+    # param_path = get_params_path(cfg, param_epoch_32H)
+    # preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, freq='32H', max_pr=max_pr)
     
-    data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'), units='mm/32H')
-    run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='32H', max_pr=max_pr)
+    # data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'), units='mm/32H')
+    # run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='32H', max_pr=max_pr)
 
     # Run the splitter
     cfg_split = train_spg.get_config('base_32H', version +'_split', location, ens=param_epoch_split)
     stats = data_loader.open_stats(cfg_split.stats_path)
     param_path = get_params_path(cfg_split, param_epoch_split)
         
-    ens = list(Path(cfg.ens_path).glob('*.nc')) 
+    ens = list(Path(cfg.ens_path).glob(f'{location}.nc')) 
     idxs = np.arange(len(ens))
     ens = np.stack([np.array(ens), idxs], axis=1)
 
