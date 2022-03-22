@@ -2,7 +2,7 @@ from pathlib import Path
 from spg import data_utils
 
 if __name__ == '__main__':
-    loc = 'tarahills'
+    loc = 'tauranga'
     av_hr = 32
     input_file = Path(f'/mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hourly/{loc}.nc')
     

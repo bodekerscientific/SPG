@@ -145,11 +145,16 @@ for version in ['v9_split']:
 
         obs_ds = xr.open_dataset(obs_path)
         obs_ds = obs_ds.groupby(obs_ds.time.dt.year)
-        #obs_ds = obs_ds.max().isel(year=obs_ds.count()['precipitation'] > 350)
-
-        if ['tprime'] in obs_ds:
+        obs_ds = obs_ds.max().isel(year=obs_ds.count()['precipitation'] > 350)
+        
+        if 'tprime' in obs_ds:
             fit_and_plot(obs_ds['tprime'].values, obs_ds['precipitation'].values, f'{version}_{loc}_Observations Annual Daily Maxima')
             show_and_save(output_path_loc / 'obs.png')
+#%%
+if 'tprime' in obs_ds:
+    fit_and_plot(obs_ds['tprime'].values, obs_ds['precipitation'].values, f'{version}_{loc}_Observations Annual Daily Maxima')
+    show_and_save(output_path_loc / 'obs.png')
+
 #%%
 rcm_output.keys()
 #%%

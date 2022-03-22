@@ -27,7 +27,7 @@ def benchmark_mixtures(data, magic_df, num_mix=5):
     for dist in [distributions.TFGammaMix, distributions.TFWeibullMix]:
         dist = dist(num_mix=num_mix)
         print(f'----------------- Fitting distribution {dist.name} -----------------')
-        dist.fit(data)#, weighting=(data**2+1))
+        dist.fit(data)#, weighting=(data**3+1))
         print(dist.get_params())
 
         print(f'Log prob: {dist.log_prob(data)}')
@@ -35,12 +35,12 @@ def benchmark_mixtures(data, magic_df, num_mix=5):
         # a = np.linspace(0., 40, 1000)
         sample = dist.sample(len(data))*scale
 
-        mask = sample < 100
+        mask = sample < 400
         sample = sample[mask]
         print(f'Total number of data points {(~mask).sum()}') 
         run.plot_qq(data*scale, sample, output_path=f'qq_{dist.name}_mix_{str(num_mix).zfill(2)}.png')
 
 if __name__ == '__main__':
-    data = data_utils.load_data_hourly()
+    data = data_utils.load_data()
     magic = data_utils.load_magic()
     benchmark_mixtures(data, magic)
