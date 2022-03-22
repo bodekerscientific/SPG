@@ -3,9 +3,11 @@ input_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hou
 ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly_split/
 num_ens : 8
 
+num_valid : 10000
+
 max_values :
   dunedin : 40
-  dunedin_south : 40
+  dunedin_combined : 40
   dunedin_aero : 40
   tarahills : 50
   tauranga : 80
