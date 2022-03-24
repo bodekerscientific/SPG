@@ -1,0 +1,6 @@
+model:
+    MixtureModel:
+        - LogitNormal
+        - LogitNormal
+
+base_spg: BernoulliLogitNormal
