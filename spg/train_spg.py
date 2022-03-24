@@ -67,7 +67,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
 
 def get_opt(params, max_lr):
     sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 200, 50000, 1e-5)
-    opt = optax.adamw(sched, weight_decay=0.1)
+    opt = optax.adamw(sched, weight_decay=0.001)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
     opt = optax.lookahead(opt, 5, 0.5)
@@ -303,8 +303,7 @@ def train_multiscale(model, cfg, load_stats=False, params_path=None, bs=256, **k
     data = data_utils.load_nc(cfg.input_file)
 
     ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*3*24, load_stats=load_stats, 
-                                                  stats_path=cfg.stats_path, ds_cls=data_loader.PrecipitationDatasetMultiScale,
-                                                  avg_period=[1, 2, 4, 8, 16, 32])
+                                                  stats_path=cfg.stats_path, ds_cls=data_loader.PrecipitationDatasetMultiScale)
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
     num_feat = len(ds_train[0][0])
@@ -317,7 +316,7 @@ def train_multiscale(model, cfg, load_stats=False, params_path=None, bs=256, **k
     
     train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
 
-def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20, train_split=False,
+def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20, train_split=True,
                      output_path='/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/split/'):
     # Train with w@h first then fine tune using obs.
     
@@ -325,7 +324,7 @@ def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20, train
     if train_split:
         print('Training hourly splitter -----')
         version_split = version + '_split'
-        cfg_split = get_config('base_32H', version=version_split, location=loc, output_path=output_path)
+        cfg_split = get_config('base_daily', version=version_split, location=loc, output_path=output_path)
         model, model_dict = get_model(version_split)
 
         wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_split, 'model_dict' : model})

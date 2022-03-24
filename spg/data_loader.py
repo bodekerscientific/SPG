@@ -100,43 +100,48 @@ def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], 
 
     return x[mask, :], y[mask]
 
-def generate_features_multiscale(pr, avg_period=[1, 2, 4, 8], pr_freq='H', rd_thresh=0.1):
+def generate_features_multiscale(pr, max_hrs=24, pr_freq='H', rd_thresh=0.1, cond_hr=4):
     output = defaultdict(list)
     # Fill missing times with nan
     pr = pr.resample(pr_freq).asfreq()
-    pr_re_rd = (pr > rd_thresh).astype(np.float32)
+    #pr_rd = (pr > rd_thresh).astype(np.float32)
 
-    for av_hr, avg_hr_last in zip(avg_period[1:], avg_period[:-1]):
-        pr_av = pr.rolling(av_hr).sum().values
+    for n in range(2, max_hrs+1):
+        pr_av = pr.rolling(n).sum().values[n-1:]
+        pr_av[pr_av < 1e-4] = 0
         
-        pr_av_last = pr.rolling(avg_hr_last).sum().values
-        x_rd = pr_re_rd.rolling(avg_hr_last).sum().values
-
-        # Calculate the sum of N days of precipitation and rain days for the conditioning
-        x = np.stack([pr_av_last, x_rd], axis=1)[:-av_hr, :]
-
-        pr_av = pr_av[av_hr:]
-        pr_av_last = pr_av_last[av_hr:]
-
-        pr_av[pr_av < 1e-3] = 0
-        pr_av_last[pr_av < 1e-3] = 0
-
-        assert ((pr_av + 1e-12 >= pr_av_last) | np.isnan(pr_av)).all()
+        pr_sub =  pr[:-n+1].values
+        pr_sub[pr_sub < 1e-4] = 0
         
-        ratio = pr_av_last/pr_av
-        ratio[pr_av_last == 0.0] = 0.0 
-        ratio[pr_av == 0.0] = 0.5
+        x = []
+        for cond_n in range(cond_hr):
+            x.append(pr_sub[cond_n: -cond_hr + cond_n])
+        x = np.stack(x, axis=1)
+        
+        pr_sub = pr_sub[cond_hr:]
+        pr_av = pr_av[cond_hr:]
+        
+        assert len(pr_sub) == len(pr_av)
+        assert len(pr_sub) == x.shape[0]
+        
+        mask = ~np.isnan(pr_av) & (pr_av > 0) & ~np.isnan(x).any(axis=1)
+
+        pr_sub = pr_sub[mask]
+        pr_av = pr_av[mask]
+        x = x[mask, :]
+        
+        ratio = pr_sub / pr_av
+        assert ratio.max() <= 1.0 + 1e-12
+        assert ratio.min() + 1e-12 >= 0
+        
         # Some values may be slightly above one due to rounding errors 
-        
-        ratio[ratio > 1.0] = 1.0
-        ratio[ratio < 0.0] = 0.0
+        ratio[ratio > 1.0 - 1e-6] = 1.0
+        ratio[ratio < 1e-6] = 0.0
 
-        mask = ~(np.isnan(pr_av) | np.isnan(x).any(axis=1) | np.isnan(ratio) | (pr_av == 0))
-        
-        output['freq'].extend(np.full_like(ratio[mask], av_hr))
-        output['x'].extend(x[mask, :])
-        output['pr'].extend(pr_av[mask])
-        output['ratio'].extend(ratio[mask])
+        output['freq'].extend(np.full_like(ratio, n))
+        output['x'].extend(x)
+        output['pr'].extend(pr_av)
+        output['ratio'].extend(ratio)
 
     output = {k : np.stack(v) for k,v in output.items()}
 
@@ -144,6 +149,8 @@ def generate_features_multiscale(pr, avg_period=[1, 2, 4, 8], pr_freq='H', rd_th
     assert output['ratio'].max() == 1.0
 
     return output
+
+
 def calculate_stats(x, y):
     x_stats = {'mean' : np.mean(x, axis=0), 'std' : np.std(x, axis=0)}
     y_stats = {'mean' : np.array(0.0, dtype=np.float32), 'std' : np.std(y, axis=0)}
@@ -223,9 +230,9 @@ class PrecipitationDatasetWH(PrecipitationDataset):
 
 
 class PrecipitationDatasetMultiScale(PrecipitationDataset):
-    def __init__(self, pr, stats=None, is_wh=False, stats_sample=5000, **kwargs):
+    def __init__(self, pr, stats=None, stats_sample=5000, **kwargs):
         self.data = generate_features_multiscale(pr)
-        self.stats = None
+        self.stats = stats
         
         if self.stats is None:
             assert stats_sample <= len(self)

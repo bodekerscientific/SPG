@@ -74,20 +74,25 @@ def test_wh_loader():
     assert len(wh_val) == 360*3
 
 def test_feat_multiscale():
-    precip = np.array([10, 1.0, 0, 0, 0, 0.05 , 20, 11, 1, 0, np.nan])
-    expected = np.array([0.0, 0.5, 0.5, 1.0, 20/20.05, 11/31, 1/12, 0.0,
-                         1.0, 1.0, 31/31.05, 12/32.05, 1/32])
-                         
+    precip = np.array([np.nan, 10, 1.0, 0, 0, 0, 0.05 , 20, 11, 1, 0, np.nan])
+    
+    exp_ratio = np.array([1.0, 0.0, 0.05/(20+0.05), 20/(20+11), 11/12, 1, 1.0, 0.0, 0.0, 0.05/(20+0.05+11), 20/(20+11+1), 11/12])
+    exp_x = np.array([10, 0, 0, 0.05, 20, 11, 10, 0, 0, 0, 0.05, 20,])
+
 
     dts = pd.date_range(start=pd.Timestamp('2019-01-01'), periods=len(precip), freq='H')
     pr = pd.Series(precip, index=dts)
 
-    res = data_loader.generate_features_multiscale(pr, avg_period=[1, 2, 4])
+    res = data_loader.generate_features_multiscale(pr, max_hrs=3, cond_hr=1)
+    
     for v in res.values():
-        assert v.shape[0] == expected.shape[0]
+        assert v.shape[0] == exp_x.shape[0]
 
-    assert (res['ratio'] == expected).all()
+    assert (res['ratio'] == exp_ratio).all()
+    assert (res['x'][:, 0] == exp_x).all()
 
+    
+    
 def test_pr_ds_multi():
     data = data_utils.load_data_hourly()
     ds = data_loader.PrecipitationDatasetMultiScale(data)
@@ -95,4 +100,4 @@ def test_pr_ds_multi():
 
 
 if __name__ == '__main__':
-    test_pr_ds_multi()
+    test_feat_multiscale()
