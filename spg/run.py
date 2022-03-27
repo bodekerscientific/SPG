@@ -9,7 +9,8 @@
 from collections import defaultdict
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = 'false'
+#os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 import sys
 from datetime import datetime
@@ -196,33 +197,26 @@ def get_params_path(cfg, epoch):
     return cfg.param_path / f'params_{str(epoch).zfill(3)}.data'
 
 
-def run_spg_multi(data_av : pd.Series, params_path : Path, stats : dict, cfg, rng=None, base_freq=32, 
-                  output_freq='H', pr_thresh=0.1, use_tqdm=True, max_pr=100):
+def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg, rng=None, x_cond=4, 
+                  output_freq='H', in_freq = 24, use_tqdm=True, max_pr=100):
     
-    data_av.values[data_av.values < 0.0] = 0.0
+    
+    data_daily.values[data_daily.values < 1e-6] = 0.0
 
-    def get_x(last_pr, avg_pr, freq):
-        return jnp.stack([last_pr, last_pr > pr_thresh, avg_pr, freq])
+    def get_x(last_pr, total_pr, freq):
+        return jnp.concatenate([jnp.array(last_pr[-x_cond:]), total_pr, freq], axis=None).astype(jnp.float32)
 
     get_x_norm = lambda *args : data_loader.apply_stats(stats['x'], get_x(*args))
-     
 
     if rng is None:
         rng = random.PRNGKey(np.random.randint(1e10))
-
-    new_idx = pd.date_range(start=data_av.index.min(), periods=len(data_av)*base_freq, freq=output_freq)
+        
+    # We assume there are no gaps in the input
+    new_idx = pd.date_range(start=data_daily.index.min(), periods=len(data_daily)*in_freq, freq=output_freq)
     output = pd.Series(np.zeros(len(new_idx)), index=new_idx)
 
-    num_feat = len(get_x_norm(0.0, 0.0, base_freq))
-    last_pr = defaultdict(float)
-    
-    all_freq = []
-    freq = base_freq
-    while(freq > 1):
-        assert freq % 2 == 0
-        all_freq.append(freq)
-        freq = freq // 2
-
+    num_feat = len(get_x_norm([0.0]*x_cond, 0.0, 2))
+        
     model, model_dict = train_spg.get_model(cfg.version)
     print(model_dict)
     params = train_spg.load_params(model, params_path, num_feat)
@@ -231,37 +225,45 @@ def run_spg_multi(data_av : pd.Series, params_path : Path, stats : dict, cfg, rn
     def sample_func(x, rng):
         return model.apply(params, x, rng, method=model.sample)
 
-    n_range = range(len(data_av))
+    n_range = range(len(data_daily))
     if use_tqdm:
         n_range = tqdm(n_range)
 
-    #@jax.jit
-    def get_pr(pr, freq, rng):
-        x  = get_x_norm(last_pr[freq], pr, freq)
+    @jax.jit
+    def split_pr(pr_last, pr, freqs, rng):
+        pr_last = list(pr_last)
+        for freq in freqs:
+            x  = get_x_norm(last_pr, pr, freq)
 
-        rng, sample_rng = random.split(rng)
-        ratio = sample_func(x, sample_rng)
+            rng, sample_rng = random.split(rng)
+            ratio = sample_func(x, sample_rng)
+            pr_l = (1.0 - ratio)*pr
+            # The remaining precipitation in used as the new total precipitation
+            pr = pr*ratio
+            pr_last.append(pr_l)
+            
+        pr_last.append(pr)    
         
-        pr_l = ratio*pr
-        pr_r = pr*(1.0 - ratio)
-        last_pr[freq] = pr_r
-
-        if freq <= 2:
-            return jnp.stack([pr_l, pr_r]).astype(jnp.float32)
-        else:
-            return jnp.concatenate([get_pr(pr_l, freq//2, rng), get_pr(pr_r, freq//2, rng)])
-
-
+        assert len(pr_last) == in_freq*2
+        return pr_last[in_freq:], rng
+    
+    all_freq = jnp.array(list(reversed(range(2, in_freq+1))))
+    
+    # We assume it wasn't raining over the first day
+    last_pr = [0.0]*in_freq
+    output_lst = []
     for n in n_range:
-        rng, sample_rng = random.split(rng)
-        out = get_pr(data_av.values[n], base_freq, sample_rng)
+        daily_pr = data_daily.values[n]
+        if daily_pr > 0:
+            last_pr, rng = split_pr(last_pr, daily_pr , all_freq, rng)
+        else:
+            last_pr = [0.0]*in_freq
+            
+        output_lst.append(last_pr)
         
-        assert out.shape[0] == base_freq
-        output.values[n*base_freq:(n+1)*base_freq] =  out
-
-    # Remove the real data and spin up period from the output
-    # output = output.iloc[spin_up_steps:]
-
+    output_lst = np.concatenate(output_lst, axis=None)
+    output[:] = output_lst
+    
     return output
 
 def run_hourly():
@@ -326,7 +328,7 @@ def run_multiscale():
     print(f'Training {version} for {location} using epoch {param_epoch_split} for split and {param_epoch_32H} for 24HR of precip')
 
     # Run the 32 hour spg.
-    cfg = train_spg.get_config('base_32H', version +'_32H', location, ens=param_epoch_32H)
+    #cfg = train_spg.get_config('base_32H', version +'_32H', location, ens=param_epoch_32H)
     # data = data_utils.load_nc(cfg.input_file)
     
     # max_pr = cfg['max_values'][location]
@@ -343,7 +345,8 @@ def run_multiscale():
     stats = data_loader.open_stats(cfg_split.stats_path)
     param_path = get_params_path(cfg_split, param_epoch_split)
         
-    ens = list(Path(cfg.ens_path).glob(f'{location}.nc')) 
+    #ens = list(Path(cfg.ens_path).glob(f'{location}.nc')) 
+    ens = [Path(f'/mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hourly/{location}_daily.nc')]
     idxs = np.arange(len(ens))
     ens = np.stack([np.array(ens), idxs], axis=1)
 

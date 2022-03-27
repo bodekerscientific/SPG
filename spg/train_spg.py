@@ -32,6 +32,7 @@ import wandb
 
 from spg import data_loader, data_utils,  spg_dist
 from bslibs.plot.qqplot import qqplot
+from tqdm import tqdm
 
 
 
@@ -66,7 +67,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
     return output_path
 
 def get_opt(params, max_lr):
-    sched = optax.warmup_cosine_decay_schedule(1e-5, max_lr, 200, 50000, 1e-5)
+    sched = optax.warmup_cosine_decay_schedule(1e-7, max_lr, 200, 50000, 1e-7)
     opt = optax.adamw(sched, weight_decay=0.001)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
@@ -99,8 +100,10 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
     def tr_loss_func(params, x_b, y_b, rng):
         # Negative Log Likelihood loss
         def loss(x, y, rng_drop):
-            return  model.apply(params, x, y, True, method=model.log_prob, rngs = {'dropout': rng_drop},  )
-
+            l =  0.1*model.apply(params, x, y, True, method=model.log_prob, rngs = {'dropout': rng_drop})*(x[-1]+4)**2
+            #id_print((x[-1]+4)**2)
+            return l
+            
         # Use vamp to vectorize over the batch dim.
         rngs = random.split(rng, num=len(x_b))
         log_p = jax.vmap(loss)(x_b, y_b, rngs)
@@ -131,12 +134,13 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
     best_loss = jnp.inf
     for epoch in range(1, num_epochs+1):
         tr_loss = []
-        for n, batch in enumerate(tr_loader):
+        tr_it = tqdm(tr_loader)
+        for batch in tr_it:
             #assert not np.isnan(batch[0]).any()
             loss, params, opt_state, rng = step(batch[0], batch[1], params, opt_state, rng)
-
             wandb.log({'train_loss_step' : loss})
             tr_loss.append(loss)
+            tr_it.set_description(f'Train loss : {jnp.stack(tr_loss[-50:]).mean():.3f}')
         
         param_path = save_params(params.slow, epoch, output_folder=cfg.param_path)
 

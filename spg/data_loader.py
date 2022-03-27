@@ -130,7 +130,7 @@ def generate_features_multiscale(pr, max_hrs=24, pr_freq='H', rd_thresh=0.1, con
         pr_av = pr_av[mask]
         x = x[mask, :]
         
-        ratio = pr_sub / pr_av
+        ratio = 1.0 - pr_sub / pr_av
         assert ratio.max() <= 1.0 + 1e-12
         assert ratio.min() + 1e-12 >= 0
         

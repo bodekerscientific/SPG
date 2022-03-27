@@ -1,3 +1,4 @@
+#%%
 """
     
     Makes historgrams / qqplots of the SPG vs historical obs
@@ -101,4 +102,6 @@ if __name__ == '__main__':
             make_plots(resample(ds_obs), resample(ds_spg), output_path, kind='daily')
         else:
             print(f'Skipping {loc_full} as cant find files')
+# %%
+
 # %%

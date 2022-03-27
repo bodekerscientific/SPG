@@ -207,7 +207,7 @@ LogitNormal = partial(Dist, num_params=2, param_func=partial(jax_utils.apply_fun
 
 class BernoulliLogitNormal(nn.Module):
     dist: Callable
-    mlp_hidden: Sequence[int] = (256,)*3
+    mlp_hidden: Sequence[int] = (1024,)*5
     min_pr: int = 0.1
 
     def setup(self, ):

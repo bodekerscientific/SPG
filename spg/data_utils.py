@@ -16,7 +16,7 @@ locations = {'dunedin' : (-45.879224, 170.502686),
 def load_magic(target_path='data/magic_tprime_sh_land.csv'):
     return pd.read_csv(target_path, parse_dates=['date'], index_col='date')
 
-def average(pr, num_hrs=32, freq='H'):
+def average(pr, num_hrs=24, freq='H'):
     pr = pr.resample(freq).asfreq()
     pr = pr.rolling(num_hrs).sum()[::num_hrs]
     pr = pr.dropna()
