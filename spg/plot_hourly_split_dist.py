@@ -16,9 +16,11 @@ data += np.random.uniform(0.0, 0.2, size=len(data))
 #%%
 data_subset = data
 stds = []
+all_hrs = []
 for n in range(8):
     hours = 2**(n)
-
+    all_hrs.append(hours)
+    
     data_average = data_subset.rolling(2).sum()
     mask = (~np.isnan(data_average.values)) & (data_average.values > 5.1)
     ratios = (data_subset[mask] / data_average[mask]).values
@@ -37,6 +39,9 @@ for n in range(8):
     #plt.savefig(f'mean_difference_{n}.png')
     plt.show()
 #%%
-plt.plot(stds)
-plt.plot(1.0/np.array(stds))
+plt.plot(np.log(list(reversed(all_hrs))), stds)
+plt.show()
+#plt.plot(1.0/np.array(stds))
 # %%
+all_hrs
+#%%

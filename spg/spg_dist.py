@@ -185,6 +185,10 @@ class Dist():
     def ppf(self, params, prob, eps=1e-12):
         params = self.param_func(params)
         return self.dist(*params).quantile(prob)
+    
+    def sample(self, params, rng):
+        params = self.param_func(params)
+        return self.dist(*params).sample(seed=rng)
 
 
 Gamma = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(
@@ -193,6 +197,8 @@ Gamma = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(
 Weibull = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(
     p), tfp_dist=tfd.Weibull)
 
+Beta = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(p), 
+               tfp_dist=tfd.Beta)
 
 def gen_parto_func(params):
     return jnp.asarray([0.0, jax_utils.pos_only(params[0]), jax_utils.pos_only(params[1])])
@@ -205,9 +211,33 @@ LogitNormal = partial(Dist, num_params=2, param_func=partial(jax_utils.apply_fun
                       tfp_dist=tfd.LogitNormal)
 
 
+class SPGSingleDist(nn.Module):
+    dist: Callable
+    mlp_hidden: Sequence[int] = (256,)*3
+    min_pr: int = 0.1
+
+    def setup(self, ):
+        self.num_params = self.dist.num_params
+        self.mlp = MLP(self.mlp_hidden+(self.num_params,))
+    
+    @nn.compact
+    def __call__(self, x, rng, train=False):
+        return self.mlp(x, train=train)
+
+    def sample(self, x, rng, train=False):
+        dist_params = self.mlp(x, train=train)
+        return self.dist.sample(dist_params, rng)
+
+    def log_prob(self, x, ratio, train=True):
+        ratio = jnp.max(jnp.array([ratio, 1e-3]))
+        ratio = jnp.min(jnp.array([ratio, 1-1e-3]))
+        
+        dist_params = self.mlp(x, train=train)
+        return self.dist.log_prob(dist_params, ratio)
+
 class BernoulliLogitNormal(nn.Module):
     dist: Callable
-    mlp_hidden: Sequence[int] = (1024,)*5
+    mlp_hidden: Sequence[int] = (256,)*3
     min_pr: int = 0.1
 
     def setup(self, ):
@@ -315,7 +345,23 @@ class MixtureModel():
             return dist.ppf(p_dist, prob)
 
         return self._loop_dist_func(params, dist_func)
+    
+    def sample(self, params, rng):
+        weightings, dist_params = self._get_weightning_params(params)
 
+        output = 0.0
+        last_idx = 0
+        # Loop over each distribution and do a weighted sum
+        for w, dist in zip(weightings, self.dists):
+            next_idx = dist.num_params + last_idx
+            p_dist = dist_params[last_idx:next_idx]
+            last_idx = next_idx
+
+            output += w*dist.sample(p_dist, rng=rng)
+            
+        return output
+        
+        
     def log_prob(self, params, y):
         def dist_func(dist, p_dist):
             # In this case it is more simple to calculate the probability, then log later.

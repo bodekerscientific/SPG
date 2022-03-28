@@ -77,9 +77,9 @@ def make_plots(ds_obs, ds_spg, output_path, kind='hourly'):
     plt.tight_layout()
     plt.savefig(output_path / f'hist_{kind}_bmax.png', dpi=200)
     plt.show()
-
+#%%
 if __name__ == '__main__':
-    version = 'v9_split'
+    version = 'v12_split'
 
     for loc_dir in (base_path / f'spg/ensemble_split/{version}/').iterdir():
         print(loc_dir)
@@ -91,7 +91,7 @@ if __name__ == '__main__':
         output_path.mkdir(parents=True, exist_ok=True)
         
         obs_path = ens_path = base_path / f'spg/station_data_hourly/{loc}.nc'
-        spg_path = loc_dir / f'{loc}.nc'
+        spg_path = loc_dir / f'{loc}_daily.nc'
 
         if obs_path.exists() and spg_path.exists():
             ds_obs = xr.open_dataset(obs_path).load()

@@ -100,7 +100,7 @@ def generate_features( pr : pd.Series, average_hours=[1, 3, 8, 24, 24*2, 24*6], 
 
     return x[mask, :], y[mask]
 
-def generate_features_multiscale(pr, max_hrs=24, pr_freq='H', rd_thresh=0.1, cond_hr=4):
+def generate_features_multiscale(pr, max_hrs=24, pr_freq='H', cond_hr=4):
     output = defaultdict(list)
     # Fill missing times with nan
     pr = pr.resample(pr_freq).asfreq()

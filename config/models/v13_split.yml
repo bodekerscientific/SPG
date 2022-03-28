@@ -1,0 +1,7 @@
+model:
+    MixtureModel:
+        - Beta
+        - Beta
+        - Beta
+
+base_spg: SPGSingleDist

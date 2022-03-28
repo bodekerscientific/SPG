@@ -34,6 +34,8 @@ from spg import data_loader, data_utils,  spg_dist
 from bslibs.plot.qqplot import qqplot
 from tqdm import tqdm
 
+# from jax.config import config
+# config.update('jax_disable_jit', True)
 
 
 # Global flag to set a specific platform, must be used at startup.
@@ -68,7 +70,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
 
 def get_opt(params, max_lr):
     sched = optax.warmup_cosine_decay_schedule(1e-7, max_lr, 200, 50000, 1e-7)
-    opt = optax.adamw(sched, weight_decay=0.001)
+    opt = optax.adamw(sched, weight_decay=0.1)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
     opt = optax.lookahead(opt, 5, 0.5)

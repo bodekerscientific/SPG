@@ -1,0 +1,4 @@
+model:
+    Beta
+
+base_spg: SPGSingleDist
