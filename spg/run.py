@@ -9,8 +9,8 @@
 from collections import defaultdict
 import os
 
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = 'false'
-#os.environ['CUDA_VISIBLE_DEVICES'] = ''
+#os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = 'false'
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 import sys
 from datetime import datetime
@@ -204,7 +204,7 @@ def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg,
     data_daily.values[data_daily.values < 1e-6] = 0.0
 
     def get_x(last_pr, total_pr, freq):
-        return jnp.concatenate([jnp.array(last_pr[-x_cond:]), total_pr, freq], axis=None).astype(jnp.float32)
+        return jnp.concatenate([jnp.array(last_pr[-x_cond:]), freq, total_pr], axis=None).astype(jnp.float32)
 
     get_x_norm = lambda *args : data_loader.apply_stats(stats['x'], get_x(*args))
 
