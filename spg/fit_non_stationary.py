@@ -81,7 +81,7 @@ def fit_ns(data, dist):
     model = DistModel(dist)
     
     params = train(model, num_feat=1, tr_loader=train_dl, valid_loader=valid_dl, num_epochs=100,
-                   opt_kwargs=dict(max_lr = 1e-2, spin_up_steps=50, max_steps=50*100, min_lr=1e-6, wd=1e-4))
+                   opt_kwargs=dict(max_lr = 1e-2, spin_up_steps=50, max_steps=50*100, min_lr=1e-7, wd=1e-4))
     
     # if params_init is None:
     #     params_init = random.uniform(rng, (dist.num_params,))*0.4 + 0.5*jnp.ones(dist.num_params)
@@ -109,7 +109,7 @@ def benchmark_mixtures(data, num_mix=5, thresh=.5):
 
     #for dist in [distributions.TFGammaMixCond]:
     rng = jax.random.PRNGKey(42)
-    dist = spg_dist.MixtureModel([spg_dist.Gamma(), spg_dist.Gamma(), spg_dist.GenPareto()])
+    dist = spg_dist.MixtureModel([ spg_dist.Gamma(), spg_dist.Gamma(), spg_dist.GenPareto()])
     params, model = fit_ns(data, dist)
     
     def apply_func(*args,  method=model.sample):
@@ -128,9 +128,10 @@ def benchmark_mixtures(data, num_mix=5, thresh=.5):
     quantiles = jnp.linspace(0, 1.0, 10000, endpoint=False)
     sample_zero = apply_func_vmap(jnp.zeros_like(quantiles), quantiles, method=model.ppf) + thresh
     sample_one = apply_func_vmap(jnp.ones_like(quantiles), quantiles, method=model.ppf) + thresh
-
+    change = 100*(sample_one - sample_zero)/sample_zero
+    print(change[-1])
     plt.figure(figsize=(12,8))
-    plt.plot(quantiles, 100*(sample_one - sample_zero)/sample_zero)
+    plt.plot(quantiles, change)
     plt.ylabel('Percentage change')
     plt.savefig('curve.png')
     
