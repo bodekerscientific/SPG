@@ -6,7 +6,6 @@
     You might need to set, as TF and JAX will both try grab the full gpu memory.
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
 """
-
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = 'false'
 
@@ -38,7 +37,7 @@ from tqdm import tqdm
 # config.update('jax_disable_jit', True)
 
 
-# Global flag to set a specific platform, must be used at startup.
+#Global flag to set a specific platform, must be used at startup.
 #jax.config.update('jax_platform_name', 'cpu')
 
 def make_qq(preds: list, targets: list, epoch: int, log, averages=[1, 8, 24], output_folder='./results/plots'):
@@ -56,8 +55,9 @@ def make_qq(preds: list, targets: list, epoch: int, log, averages=[1, 8, 24], ou
     output_path = Path(output_folder) / f'qq_{str(epoch).zfill(3)}.png'
     plt.savefig(output_path, transparent=False, dpi=150)
     plt.close()
-
-    log({'qq_plot' : wandb.Image(str(output_path))})
+    
+    if log is not None:
+        log({'qq_plot' : wandb.Image(str(output_path))})
 
 def save_params(params, epoch : int, output_folder='./results/params'):
     output_path = Path(output_folder) / f'params_{str(epoch).zfill(3)}.data'
@@ -68,17 +68,17 @@ def save_params(params, epoch : int, output_folder='./results/params'):
     
     return output_path
 
-def get_opt(params, max_lr):
-    sched = optax.warmup_cosine_decay_schedule(1e-7, max_lr, 200, 50000, 1e-7)
-    opt = optax.adamw(sched, weight_decay=0.1)
+def get_opt(params, max_lr=1e-3, min_lr=1e-6, max_steps=50000, spin_up_steps=300, wd=1e-7, lookahead=5):
+    sched = optax.warmup_cosine_decay_schedule(min_lr, max_lr, spin_up_steps, max_steps, min_lr)
+    opt = optax.adamw(sched, weight_decay=wd)
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
-    opt = optax.lookahead(opt, 5, 0.5)
+    opt = optax.lookahead(opt, lookahead, 0.5)
     opt_state = opt.init(params)
 
     return opt, opt_state, params
 
-def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_lr=1e-4, num_epochs=100, min_pr=0.1):
+def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=None, num_epochs=100, min_pr=0.1, opt_kwargs={}):
     rng = random.PRNGKey(42**2)
     x = jnp.ones(( num_feat,), dtype=jnp.float32)
 
@@ -87,7 +87,7 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
     if params is None:
         params = params_init
 
-    opt, opt_state, params = get_opt(params, max_lr)
+    opt, opt_state, params = get_opt(params, **opt_kwargs)
 
     @jax.jit
     def val_loss_func(params, x_b, y_b):
@@ -102,9 +102,7 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
     def tr_loss_func(params, x_b, y_b, rng):
         # Negative Log Likelihood loss
         def loss(x, y, rng_drop):
-            l =  0.1*model.apply(params, x, y, True, method=model.log_prob, rngs = {'dropout': rng_drop})*(x[-1]+4)**2
-            #id_print((x[-1]+4)**2)
-            return l
+            return model.apply(params, x, y, True, method=model.log_prob, rngs = {'dropout': rng_drop})
             
         # Use vamp to vectorize over the batch dim.
         rngs = random.split(rng, num=len(x_b))
@@ -140,11 +138,13 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
         for batch in tr_it:
             #assert not np.isnan(batch[0]).any()
             loss, params, opt_state, rng = step(batch[0], batch[1], params, opt_state, rng)
-            wandb.log({'train_loss_step' : loss})
+            if log is not None:
+                wandb.log({'train_loss_step' : loss})
             tr_loss.append(loss)
             tr_it.set_description(f'Train loss : {jnp.stack(tr_loss[-50:]).mean():.3f}')
         
-        param_path = save_params(params.slow, epoch, output_folder=cfg.param_path)
+        if cfg is not None:
+            param_path = save_params(params.slow, epoch, output_folder=cfg.param_path)
 
         # Calculate the validation loss and generate some samples.
         val_loss = []
@@ -170,17 +170,20 @@ def train(model, num_feat, log, tr_loader, valid_loader, cfg, params=None, max_l
         val_loss = jnp.stack(val_loss).mean()
         tr_loss = jnp.stack(tr_loss).mean()
 
-        log({'train_loss_epoch': tr_loss,
-             'val_loss': val_loss,
-             'epoch': epoch,
-             'dd_val' : dd_pred,
-             'dd_mae' : jnp.abs(dd_target - dd_pred)})
+        if log is not None:    
+            log({'train_loss_epoch': tr_loss,
+                'val_loss': val_loss,
+                'epoch': epoch,
+                'dd_val' : dd_pred,
+                'dd_mae' : jnp.abs(dd_target - dd_pred)})
 
         print(f'{epoch}/{num_epochs}, valid loss : {val_loss:.4f}, train loss'
               f' {tr_loss:.4f}, dry day prob {dd_pred:.4f}, expected {dd_target:.4f}')
-
-        make_qq(preds, targets, epoch, log, output_folder=cfg.plot_path)
-
+        
+        if cfg is not None:
+            make_qq(preds[0:10000], targets[0:10000], epoch, log, output_folder=cfg.plot_path)
+        else:
+            make_qq(preds[0:10000], targets[0:10000], epoch, log)
 
         # if epoch > 2 and val_loss < best_loss:
         #     best_loss = val_loss
@@ -336,7 +339,7 @@ def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20, train
         wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_split, 'model_dict' : model})
         logger = wandb.log
         
-        train_multiscale(model, cfg_split, load_stats=load_stats,  bs=bs, log=logger, num_epochs=20, max_lr=1e-3)
+        train_multiscale(model, cfg_split, load_stats=load_stats,  bs=bs, log=logger, num_epochs=20)
         wandb.finish()
     else:
         #Load the 32H stats config
@@ -356,7 +359,7 @@ def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20, train
         logger = wandb.log
 
         param_wh = train_wh(cfg_wh, loc.split('_')[0], model=model, load_stats=False,  bs=bs, num_epochs=wh_epochs,
-                            log=logger, max_lr=1e-3)
+                            log=logger)
         wandb.finish()
 
         # Fine tune with obs
@@ -364,7 +367,7 @@ def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20, train
         wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_32H, 'model_dict' : model})
         logger = wandb.log
         
-        train_obs(model, cfg_32H, load_stats=True,  bs=bs, log=logger, max_lr=1e-4, num_epochs=20, param_init=param_wh)
+        train_obs(model, cfg_32H, load_stats=True,  bs=bs, log=logger, num_epochs=20, param_init=param_wh)
         wandb.finish()
 
 if __name__ == '__main__':

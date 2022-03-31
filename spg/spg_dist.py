@@ -19,10 +19,8 @@ tfd = tfp.distributions
 
 # jax.config.update("jax_debug_nans", True)
 
-
 def safe_log(x):
     return jnp.log(jnp.maximum(x, 1e-6))
-
 
 class FeedForward(nn.Module):
     mult: int = 4
@@ -210,6 +208,8 @@ GenPareto = partial(Dist, num_params=2,
 LogitNormal = partial(Dist, num_params=2, param_func=partial(jax_utils.apply_func_idx, idx=1), 
                       tfp_dist=tfd.LogitNormal)
 
+Dirichlet = partial(Dist, num_params=24, param_func=lambda p: jax_utils.pos_only(p)[None, :], tfp_dist=tfd.Dirichlet)
+
 
 class SPGSingleDist(nn.Module):
     dist: Callable
@@ -229,8 +229,8 @@ class SPGSingleDist(nn.Module):
         return self.dist.sample(dist_params, rng)
 
     def log_prob(self, x, ratio, train=True):
-        ratio = jnp.max(jnp.array([ratio, 1e-3]))
-        ratio = jnp.min(jnp.array([ratio, 1-1e-3]))
+        # ratio = jnp.max(jnp.array([ratio, 1e-3]))
+        # ratio = jnp.min(jnp.array([ratio, 1-1e-3]))
         
         dist_params = self.mlp(x, train=train)
         return self.dist.log_prob(dist_params, ratio)
@@ -303,8 +303,7 @@ class MixtureModel():
         self.dists = dists
         self.num_params: int = 0
 
-        assert len(
-            self.dists) > 0, 'Need at least one distribution for mixture model'
+        assert len(self.dists) > 0, 'Need at least one distribution for mixture model'
 
         # Find the total number of params in all the distributions
         for dist in self.dists:
@@ -360,7 +359,6 @@ class MixtureModel():
             output += w*dist.sample(p_dist, rng=rng)
             
         return output
-        
         
     def log_prob(self, params, y):
         def dist_func(dist, p_dist):
