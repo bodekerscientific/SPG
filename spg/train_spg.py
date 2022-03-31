@@ -41,7 +41,10 @@ from tqdm import tqdm
 #jax.config.update('jax_platform_name', 'cpu')
 
 def make_qq(preds: list, targets: list, epoch: int, log, averages=[1, 8, 24], output_folder='./results/plots'):
-    
+    # Ensure output folder exists
+    output_folder = Path(output_folder)
+    output_folder.mkdir(parents=True, exist_ok=True)
+
     _, axes = plt.subplots(1, len(averages), figsize=(len(averages)*8, 8))
     
     for ax, av in zip(axes, averages):
@@ -52,7 +55,7 @@ def make_qq(preds: list, targets: list, epoch: int, log, averages=[1, 8, 24], ou
         ax.set_title(f'{av} average')
         qqplot(rolling(targets), rolling(preds), ax=ax, num_highlighted_quantiles=10, linewidth=0)
     
-    output_path = Path(output_folder) / f'qq_{str(epoch).zfill(3)}.png'
+    output_path = output_folder / f'qq_{str(epoch).zfill(3)}.png'
     plt.savefig(output_path, transparent=False, dpi=150)
     plt.close()
     
@@ -60,7 +63,11 @@ def make_qq(preds: list, targets: list, epoch: int, log, averages=[1, 8, 24], ou
         log({'qq_plot' : wandb.Image(str(output_path))})
 
 def save_params(params, epoch : int, output_folder='./results/params'):
-    output_path = Path(output_folder) / f'params_{str(epoch).zfill(3)}.data'
+    # Ensure output folder exists
+    output_folder = Path(output_folder)
+    output_folder.mkdir(parents=True, exist_ok=True)
+    
+    output_path = output_folder / f'params_{str(epoch).zfill(3)}.data'
     
     params_bytes = flax.serialization.to_bytes(params)
     with open(output_path, 'wb') as f:
