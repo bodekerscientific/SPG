@@ -93,11 +93,23 @@ def test_feat_multiscale():
 
     
     
-def test_pr_ds_multi():
-    data = data_utils.load_data_hourly()
-    ds = data_loader.PrecipitationDatasetMultiScale(data)
-
+def test_generate_features_split():
+    precip = np.array([10, 1.0, 0, 0, 0, 1.0 , 20, 11, 1, 0])
+    dts = pd.date_range(start=pd.Timestamp('2019-01-01'), periods=len(precip), freq='H')
+    pr = pd.Series(precip, index=dts)
+    
+    target = {
+        'ratio' : np.array([[0., 0., 1.0], [0.0, 1/21, 20/21]]),
+        'x' : np.array([[11.0, 1.0, 32.0], [1.0, 21, 12]]),
+        'pr' : np.array([1.0, 21])
+    }
+    
+    res = data_loader.generate_features_split(pr, sum_period=3)
+    for k,v in res.items():
+        assert np.isclose(v, target[k]).all()
+ 
+    
 
 
 if __name__ == '__main__':
-    test_feat_multiscale()
+    test_generate_features_split()

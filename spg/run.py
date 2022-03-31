@@ -196,15 +196,12 @@ def run_pool(cfg, **kwargs):
 def get_params_path(cfg, epoch):
     return cfg.param_path / f'params_{str(epoch).zfill(3)}.data'
 
-
-def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg, rng=None, x_cond=4, 
+def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg, rng=None, #x_cond=4, 
                   output_freq='H', in_freq = 24, use_tqdm=True, max_pr=100):
-    
-    
     data_daily.values[data_daily.values < 1e-6] = 0.0
-
-    def get_x(last_pr, total_pr, freq):
-        return jnp.concatenate([jnp.array(last_pr[-x_cond:]), freq, total_pr], axis=None).astype(jnp.float32)
+    
+    def get_x(last_pr, total_pr, next_pr):
+        return jnp.array([last_pr, total_pr, next_pr]).astype(jnp.float32)
 
     get_x_norm = lambda *args : data_loader.apply_stats(stats['x'], get_x(*args))
 
@@ -215,8 +212,8 @@ def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg,
     new_idx = pd.date_range(start=data_daily.index.min(), periods=len(data_daily)*in_freq, freq=output_freq)
     output = pd.Series(np.zeros(len(new_idx)), index=new_idx)
 
-    num_feat = len(get_x_norm([0.0]*x_cond, 0.0, 2))
-        
+    num_feat = len(get_x_norm(0.0, 0.0, 2.0))
+    
     model, model_dict = train_spg.get_model(cfg.version)
     print(model_dict)
     params = train_spg.load_params(model, params_path, num_feat)
@@ -228,39 +225,22 @@ def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg,
     n_range = range(len(data_daily))
     if use_tqdm:
         n_range = tqdm(n_range)
-
-    @jax.jit
-    def split_pr(pr_last, pr, freqs, rng):
-        pr_last = list(pr_last)
-        for freq in freqs:
-            x  = get_x_norm(last_pr, pr, freq)
-
-            rng, sample_rng = random.split(rng)
-            ratio = sample_func(x, sample_rng)
-            pr_l = (1.0 - ratio)*pr
-            # The remaining precipitation in used as the new total precipitation
-            pr = pr*ratio
-            pr_last.append(pr_l)
-            
-        pr_last.append(pr)    
-        
-        assert len(pr_last) == in_freq*2
-        return pr_last[in_freq:], rng
-    
-    all_freq = jnp.array(list(reversed(range(2, in_freq+1))))
-    
+   
     # We assume it wasn't raining over the first day
-    last_pr = [0.0]*in_freq
+    # last_pr = [0.0]*in_freq
     output_lst = []
     for n in n_range:
+        last_pr = data_daily.values[n-1] if n > 0 else 0.0
         daily_pr = data_daily.values[n]
-        if daily_pr > 0:
-            last_pr, rng = split_pr(last_pr, daily_pr , all_freq, rng)
-        else:
-            last_pr = [0.0]*in_freq
-            
-        output_lst.append(last_pr)
+        next_pr = data_daily.values[n+1] if n < len(n_range) - 1 else 0.0
         
+        if daily_pr > 0:
+            x  = get_x_norm(last_pr, daily_pr, next_pr)
+            rng, sample_rng = random.split(rng)
+            ratio = np.array(sample_func(x, sample_rng))
+            output_lst.append(ratio * daily_pr)
+        else:
+            output_lst.append(np.array(last_pr = [0.0]*in_freq)/24)    
     output_lst = np.concatenate(output_lst, axis=None)
     output[:] = output_lst
     
@@ -341,7 +321,7 @@ def run_multiscale():
     # run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='32H', max_pr=max_pr)
 
     # Run the splitter
-    cfg_split = train_spg.get_config('base_32H', version +'_split', location, ens=param_epoch_split)
+    cfg_split = train_spg.get_config('base_daily', version +'_split', location, ens=param_epoch_split)
     stats = data_loader.open_stats(cfg_split.stats_path)
     param_path = get_params_path(cfg_split, param_epoch_split)
         
