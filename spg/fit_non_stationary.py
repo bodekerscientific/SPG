@@ -119,16 +119,20 @@ def benchmark_mixtures(data, num_mix=5, thresh=.5):
         func = partial(model.apply, params, method=method)
         return jax.vmap(func)(*args)
     
+    magic_df = data_utils.load_magic()
+    t_prime = data_utils.get_tprime_for_times(data.index, magic_df['ssp245'])
 
-    probs = random.uniform(rng, shape=(10000,) )
-    sample = apply_func_vmap(jnp.ones_like(probs), probs, method=model.ppf)
+    probs = random.uniform(rng, shape=t_prime.shape)
+    sample = apply_func_vmap(t_prime, probs, method=model.ppf)
     run.plot_qq(data, sample, output_path=f'qq_mix.png')
     
     
+    scale_tprime = t_prime.max() -  t_prime.min()
+    
     quantiles = jnp.linspace(0, 1.0, 10000, endpoint=False)
-    sample_zero = apply_func_vmap(jnp.zeros_like(quantiles), quantiles, method=model.ppf) + thresh
-    sample_one = apply_func_vmap(jnp.ones_like(quantiles), quantiles, method=model.ppf) + thresh
-    change = 100*(sample_one - sample_zero)/sample_zero
+    sample_zero = apply_func_vmap(jnp.full_like(quantiles, t_prime.min()), quantiles, method=model.ppf) + thresh
+    sample_one = apply_func_vmap(jnp.full_like(quantiles, t_prime.max()), quantiles, method=model.ppf) + thresh
+    change = (100/scale_tprime)*(sample_one - sample_zero)/sample_zero
     print(change[-1])
     plt.figure(figsize=(12,8))
     plt.plot(quantiles, change)
