@@ -67,6 +67,13 @@ def load_data(fpath="/mnt/temp/projects/emergence/data_keep/station_data/dunedin
     out.index = out.index.normalize()
     return out
 
+def load_simulated_data(fpath="./data/simulated_precip__gamma_a_0.25_scale_50.csv"):
+    df = pd.read_csv(fpath, parse_dates=['date'])
+    out = pd.Series(df['precip'].values, index=df['date'].values)
+    out.index = out.index.normalize()
+    return out
+
+
 def load_data_hourly(fpath="/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAndSite/Hourly/Precipitation/5212.nc"):
     ds = xr.open_dataset(fpath)
     # Select only the hourly values
