@@ -109,7 +109,7 @@ def benchmark_mixtures(data, num_mix=5, thresh=.5):
 
     #for dist in [distributions.TFGammaMixCond]:
     rng = jax.random.PRNGKey(42)
-    dist = spg_dist.MixtureModel([ spg_dist.Gamma(), spg_dist.Gamma(), spg_dist.GenPareto()])
+    dist = spg_dist.MixtureModel([spg_dist.Gamma(), spg_dist.GenPareto()])
     params, model = fit_ns(data, dist)
     
     def apply_func(*args,  method=model.sample):
@@ -138,7 +138,19 @@ def benchmark_mixtures(data, num_mix=5, thresh=.5):
     plt.plot(quantiles, change)
     plt.ylabel('Percentage change')
     plt.savefig('curve.png')
+    plt.close()
     
+    plt.figure(figsize=(12,8))
+    plt.title('Percentage change per degree')
+    sample_zero = apply_func_vmap(jnp.zeros_like(quantiles), quantiles, method=model.ppf) + thresh
+    for t in jnp.arange(0.2, 1.7, 0.2):
+        quantiles = jnp.linspace(0, 1.0, 10000, endpoint=False)
+        sample_one = apply_func_vmap(jnp.full_like(quantiles, t), quantiles, method=model.ppf) + thresh
+        
+        change = (100/t)*(sample_one - sample_zero)/sample_zero
+        plt.plot(quantiles, change, label=f'Tprime = 0K to {t}')
+    plt.legend()
+    plt.savefig('curves.png')
 
 if __name__ == '__main__':
     data = data_utils.load_data()

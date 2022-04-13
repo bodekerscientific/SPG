@@ -17,7 +17,7 @@ from jax.experimental.host_callback import id_print
 
 import matplotlib.pyplot as plt
 
-from . import jax_utils
+from spg import jax_utils
 
 from tensorflow_probability.substrates import jax as tfp
 tfd = tfp.distributions
@@ -30,7 +30,6 @@ jax.config.update('jax_platform_name', 'cpu')
 
 def fit(func, params_init, options={"gtol": 1e-7}):
     return minimize(func, params_init, method="BFGS", options=options)
-
 
 def fill_first(params, n=1, val=0):
     """ Adds a zero to params, so we can force the loc=0 """
@@ -149,14 +148,17 @@ class TFGeneralizedPareto(TFPDist):
 
 
 class TFMixture(Dist):
-    def __init__(self, dist_mix, num_mix, name='Mixture', param_init=None, num_comp=2, wd=0.01, rng=None, **kwargs):
+    def __init__(self, dist_mix, num_mix, name='Mixture', param_init=None, num_comp=2, wd=0.01, rng=None, exp_params=False, **kwargs):
         
         if rng is None:
             rng = jax.random.PRNGKey(42)
         self.rng = rng
 
         if param_init is None:
-            params = jax.random.normal(rng, (num_mix*(num_comp+1),)) 
+            if exp_params:
+                params = jax.random.normal(rng, (num_mix*(num_comp+1)*2,)) 
+            else:
+                params = jax.random.normal(rng, (num_mix*(num_comp+1),)) 
         else:
             params = param_init
             assert len(params) == num_mix*(num_comp+1)
@@ -164,8 +166,9 @@ class TFMixture(Dist):
         self.wd = wd
         self.distComp = dist_mix
         super().__init__(name, params, **kwargs)
-
+        
     def make_dist(self, params=None, cond=None):
+
         if params is None:
             params = self._params
 
@@ -180,9 +183,9 @@ class TFMixture(Dist):
             #id_print(res)
             #id_print(params)
             # We don't include the probs in the loss function
-            wd =  0.5 * weight_decay * params[:-1]@params[:-1]
+           #  wd =  0.5 * weight_decay * params[:-1]@params[:-1]
             #id_print(wd)
-            return res + wd
+            return res #+ wd
 
         res = fit_func(loss_func, self._params)
         self._params = res.x
@@ -197,7 +200,10 @@ class TFMixture(Dist):
         else:
             weighting = jnp.array(weighting)
 
-        return  -(self.make_dist(params, cond=cond).log_prob(data[:, None]+eps)*weighting).mean()
+        def map_func(c, d):
+            return -(self.make_dist(params, cond=c).log_prob(d+eps)).mean()
+        
+        return  jax.vmap(map_func)(cond, data).mean()
 
     def cdf(self, x, cond=None):
         return self.make_dist(cond=cond).cdf(x)
@@ -205,8 +211,13 @@ class TFMixture(Dist):
     def sample(self, n, cond=None, rng=None):
         if rng is None:
             rng = self.rng
-        return self.make_dist(cond=cond).sample(n, seed=rng)
-
+        
+        def map_func(c, r):
+            return -(self.make_dist(cond=c).sample(1, seed=r)).mean()
+        
+        rngs = random.split(rng, num=n)
+        return jax.vmap(map_func)(cond, rngs)
+    
     def ppf(self, x, cond=None):
         params, probs = self.param_func(self._params, cond)
         dist_sub = self.distComp(*params)        
@@ -223,13 +234,34 @@ def post_process_mix(params, cond=None, num_comp=2, pos_only=True):
     return params[:-1], nn.softmax(probs)
 
 TFGammaMix = partial(TFMixture, dist_mix=tfd.Gamma, name='GammaMix', 
-                    param_func=post_process_mix)
+                     param_func=post_process_mix)
+
+
+TFGammaMix = partial(TFMixture, dist_mix=tfd.Gamma, name='GammaMix', 
+                     param_func=post_process_mix)
+
 
 TFLogNormMix = partial(TFMixture, dist_mix=tfd.LogNormal, name='LogNormMix', 
                        param_func=post_process_mix)
+
+def post_process_mix_cond(params, cond=None, num_comp=2, pos_only=True):
+    """ Extract the paramaters for the mixture and the weighting of the params. """
+    if cond is not None:
+        a, b = jnp.split(params, 2, axis=0)
+        params = a + b*cond
+    
+    params = params.reshape((num_comp+1, -1))
+    
+    if pos_only:
+        params = jax_utils.pos_only(params)
+    
+    probs = params[-1:]
+    return params[:-1], nn.softmax(probs)
+
  
-TFWeibullMix = partial(TFMixture, dist_mix=tfd.Weibull, name='WeibullMix', 
-                       param_func=post_process_mix)
+TFGammaMixCond = partial(TFMixture, dist_mix=tfd.Gamma, name='WeibullMix', 
+                           param_func=post_process_mix_cond, num_comp=2, exp_params=True)
+
 
 # Not fitting accurately
 # TFInverseGammaMix = partial(TFMixture, dist_mix=tfd.InverseGamma, name='InverseGamma', 
@@ -292,8 +324,9 @@ class RainDay(Dist):
         return p < thresh
 
     def fit(self, data, fit_func=fit):
-        cols = []
+        
         # TODO: This assumes that there are no gaps in the time series
+        cols = []
         for n in range(self.ar_depth):
             cols.append(data[n: -(self.ar_depth-n)] > self.thresh)
 
