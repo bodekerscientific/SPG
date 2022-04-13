@@ -151,7 +151,7 @@ def generate_features_multiscale(pr, max_hrs=24, pr_freq='H', cond_hr=4):
 
     return output
 
-def generate_features_split(pr, sum_period=24, pr_freq='H', cond_hr=4):
+def generate_features_split(pr, sum_period=24, pr_freq='H', cond_hr=12, eps=1e-5):
     pr = pr.resample(pr_freq).asfreq()
     pr_av = pr.rolling(sum_period).sum().values[sum_period - 1:]
     
@@ -168,14 +168,17 @@ def generate_features_split(pr, sum_period=24, pr_freq='H', cond_hr=4):
         y.append(ratio)
     y = np.stack(y, axis=1)
     
-    # # Add the last n hours of precipitation
-    x = []
-    # for cond_n in range(cond_hr):
-    #     x.append(pr[sum_period - cond_n - 1: -sum_period + cond_n].values)
-    
     # Add the current amount of sum_period precipitation, next day, and fist day
-    x.extend([pr_av[:-2*sum_period], pr_av[sum_period:-sum_period], pr_av[2*sum_period:]])
+    x = [pr_av[:-2*sum_period], pr_av[sum_period:-sum_period], pr_av[2*sum_period:]]
     x = np.stack(x, axis=1)
+    
+    assert cond_hr <= sum_period
+    # Add the last n hours of precipitation
+    x_cond = []
+    for cond_n in range(cond_hr):
+        x_cond.append(pr[sum_period - cond_hr + cond_n: -2*sum_period + cond_n + 1 - cond_hr].values)
+    x = np.concatenate([x, np.stack(x_cond, axis=1)], axis=1)
+    
     y = y[sum_period: -sum_period]
     pr_av = pr_av[sum_period: -sum_period]
     
@@ -188,7 +191,7 @@ def generate_features_split(pr, sum_period=24, pr_freq='H', cond_hr=4):
     y[y > 1] = 1.0
     y[y < 0] = 0.0
     
-    y = y + 1e-5
+    y = y + eps
     y = y / y.sum(axis=1)[:, None]
     
     return {'x' : x, 'ratio' : y, 'pr' : pr_av}

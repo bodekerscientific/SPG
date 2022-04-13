@@ -79,7 +79,7 @@ def make_plots(ds_obs, ds_spg, output_path, kind='hourly'):
     plt.show()
 #%%
 if __name__ == '__main__':
-    version = 'v12_split'
+    version = 'v14_split'
 
     for loc_dir in (base_path / f'spg/ensemble_split/{version}/').iterdir():
         print(loc_dir)

@@ -197,11 +197,11 @@ def get_params_path(cfg, epoch):
     return cfg.param_path / f'params_{str(epoch).zfill(3)}.data'
 
 def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg, rng=None, #x_cond=4, 
-                  output_freq='H', in_freq = 24, use_tqdm=True, max_pr=100):
+                  output_freq='H', in_freq = 24, use_tqdm=True, max_pr=100, cond_hr=12):
     data_daily.values[data_daily.values < 1e-6] = 0.0
     
-    def get_x(last_pr, total_pr, next_pr):
-        return jnp.array([last_pr, total_pr, next_pr]).astype(jnp.float32)
+    def get_x(hourly_pr, last_pr, total_pr, next_pr):
+        return jnp.concatenate([jnp.array([last_pr, total_pr, next_pr]), jnp.array(hourly_pr[-cond_hr:])], axis=None).astype(jnp.float32)
 
     get_x_norm = lambda *args : data_loader.apply_stats(stats['x'], get_x(*args))
 
@@ -212,7 +212,7 @@ def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg,
     new_idx = pd.date_range(start=data_daily.index.min(), periods=len(data_daily)*in_freq, freq=output_freq)
     output = pd.Series(np.zeros(len(new_idx)), index=new_idx)
 
-    num_feat = len(get_x_norm(0.0, 0.0, 2.0))
+    num_feat = len(get_x_norm(np.array([0.0]*in_freq), 0.0, 0.0, 2.0))
     
     model, model_dict = train_spg.get_model(cfg.version)
     print(model_dict)
@@ -228,20 +228,20 @@ def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg,
    
     # We assume it wasn't raining over the first day
     # last_pr = [0.0]*in_freq
-    output_lst = []
+    output_lst = [np.array([0.0]*in_freq)]
     for n in n_range:
         last_pr = data_daily.values[n-1] if n > 0 else 0.0
         daily_pr = data_daily.values[n]
         next_pr = data_daily.values[n+1] if n < len(n_range) - 1 else 0.0
         
         if daily_pr > 0:
-            x  = get_x_norm(last_pr, daily_pr, next_pr)
+            x  = get_x_norm(output_lst[-1], last_pr, daily_pr, next_pr)
             rng, sample_rng = random.split(rng)
             ratio = np.array(sample_func(x, sample_rng))
             output_lst.append(ratio * daily_pr)
         else:
-            output_lst.append(np.array(last_pr = [0.0]*in_freq)/24)    
-    output_lst = np.concatenate(output_lst, axis=None)
+            output_lst.append(np.array([0.0]*in_freq)/24)    
+    output_lst = np.concatenate(output_lst[1:], axis=None)
     output[:] = output_lst
     
     return output

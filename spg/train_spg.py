@@ -109,7 +109,7 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
     def tr_loss_func(params, x_b, y_b, rng):
         # Negative Log Likelihood loss
         def loss(x, y, rng_drop):
-            return model.apply(params, x, y, True, method=model.log_prob, rngs = {'dropout': rng_drop})
+            return model.apply(params, x, y, True, method=model.log_prob, rngs = {'dropout': rng_drop})#*(x[1]+4)**2
             
         # Use vamp to vectorize over the batch dim.
         rngs = random.split(rng, num=len(x_b))

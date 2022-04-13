@@ -100,16 +100,15 @@ def test_generate_features_split():
     
     target = {
         'ratio' : np.array([[0., 0., 1.0], [0.0, 1/21, 20/21]]),
-        'x' : np.array([[11.0, 1.0, 32.0], [1.0, 21, 12]]),
+        'x' : np.array([[11.0, 1.0, 32.0, 1.0, 0,], [1.0, 21, 12, 0, 0,]]),
         'pr' : np.array([1.0, 21])
     }
     
-    res = data_loader.generate_features_split(pr, sum_period=3)
+    res = data_loader.generate_features_split(pr, sum_period=3, cond_hr=2)
     for k,v in res.items():
-        assert np.isclose(v, target[k]).all()
- 
+        assert np.isclose(v, target[k], 1e-4, 1e-4).all()
     
-
+    
 
 if __name__ == '__main__':
     test_generate_features_split()

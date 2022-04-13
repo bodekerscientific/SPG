@@ -1,0 +1,4 @@
+model:
+    Dirichlet
+
+base_spg: SPGSingleDist
