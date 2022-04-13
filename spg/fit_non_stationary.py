@@ -74,13 +74,13 @@ class DistModel(nn.Module):
         return self.dist.ppf(dist_prams, p)
 
     
-def fit_ns(data, dist):
+def fit_ns(data, dist, num_epochs=100):
     tr_ds, val_ds = data_loader.get_datasets(data, num_valid=3000, ds_cls=SimpleDataset)
     train_dl, valid_dl = data_loader.get_data_loaders(tr_ds, val_ds)
     
     model = DistModel(dist)
     
-    params = train(model, num_feat=1, tr_loader=train_dl, valid_loader=valid_dl, num_epochs=100,
+    params = train(model, num_feat=1, tr_loader=train_dl, valid_loader=valid_dl, num_epochs=num_epochs,
                    opt_kwargs=dict(max_lr = 1e-2, spin_up_steps=50, max_steps=50*100, min_lr=1e-7, wd=1e-4))
     
     # if params_init is None:
@@ -102,15 +102,23 @@ def fit_ns(data, dist):
 
     
 def benchmark_mixtures(data, num_mix=5, thresh=.5):
+    print(data)
     mask = data >= thresh
     data = data[mask] - thresh
     scale = data.values.std()
     data = data/scale
 
     #for dist in [distributions.TFGammaMixCond]:
-    rng = jax.random.PRNGKey(42)
-    dist = spg_dist.MixtureModel([spg_dist.Gamma(), spg_dist.GenPareto()])
-    params, model = fit_ns(data, dist)
+    import numpy as np
+    rng = np.random.default_rng()
+    seed = rng.integers(low=0, high=10000)
+    print("seed:", seed)
+    rng = jax.random.PRNGKey(seed)
+    #dist = spg_dist.Gamma() 
+    #dist = spg_dist.MixtureModel([spg_dist.Gamma()]*5)
+    dist = spg_dist.MixtureModel([spg_dist.Gamma(), spg_dist.Gamma(), spg_dist.GenPareto()])
+    params, model = fit_ns(data, dist, num_epochs=100)
+    print("params:\n", params)
     
     def apply_func(*args,  method=model.sample):
         return model.apply(params, *args,  method=method)
@@ -126,18 +134,32 @@ def benchmark_mixtures(data, num_mix=5, thresh=.5):
     sample = apply_func_vmap(t_prime, probs, method=model.ppf)
     run.plot_qq(data, sample, output_path=f'qq_mix.png')
     
-    
     scale_tprime = t_prime.max() -  t_prime.min()
     
     quantiles = jnp.linspace(0, 1.0, 10000, endpoint=False)
-    sample_zero = apply_func_vmap(jnp.full_like(quantiles, t_prime.min()), quantiles, method=model.ppf) + thresh
-    sample_one = apply_func_vmap(jnp.full_like(quantiles, t_prime.max()), quantiles, method=model.ppf) + thresh
+    sample_zero = apply_func_vmap(jnp.full_like(quantiles, t_prime.min()), quantiles, method=model.ppf)*scale + thresh
+    sample_one = apply_func_vmap(jnp.full_like(quantiles, t_prime.max()), quantiles, method=model.ppf)*scale + thresh
     change = (100/scale_tprime)*(sample_one - sample_zero)/sample_zero
+    rate = np.log(sample_one/sample_zero) / scale_tprime * 100
     print(change[-1])
+    
+    # sample_zero = apply_func_vmap(jnp.zeros_like(quantiles), quantiles, method=model.ppf)*scale + thresh
+    # sample_one = apply_func_vmap(jnp.ones_like(quantiles), quantiles, method=model.ppf)*scale + thresh
     plt.figure(figsize=(12,8))
-    plt.plot(quantiles, change)
-    plt.ylabel('Percentage change')
-    plt.savefig('curve.png')
+    plt.plot(quantiles, rate)
+    plt.ylabel('Rate (% per K)')
+    plt.xlabel('Quantile')
+    plt.savefig(f'curve.png')
+    plt.close()
+
+    import numpy as np
+    import seaborn as sns
+    xs = quantiles
+    ys = sample_zero
+    sns.lineplot(x=xs, y=ys, label="model")
+    ys2 = np.quantile(data*scale+thresh, quantiles)
+    sns.lineplot(x=xs, y=ys2, label="data")
+    plt.savefig("ppf.png")
     plt.close()
     
     plt.figure(figsize=(12,8))
@@ -153,5 +175,6 @@ def benchmark_mixtures(data, num_mix=5, thresh=.5):
     plt.savefig('curves.png')
 
 if __name__ == '__main__':
-    data = data_utils.load_data()
+    #data = data_utils.load_data()
+    data = data_utils.load_simulated_data()
     benchmark_mixtures(data)
