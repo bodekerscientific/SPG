@@ -1,9 +1,14 @@
 output_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/
 input_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hourly/
-ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly_split/
-num_ens : 8
+ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly/
 
-num_valid : 10000
+train_func: train_obs
+train_kwargs : 
+  freq : H
+  make_tp_plots : True
+
+num_ens : 10
+num_valid : 20000
 
 max_values :
   dunedin : 40

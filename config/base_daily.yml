@@ -5,10 +5,15 @@ ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_split/
 num_ens : 10
 num_valid : 1000
 
+train_func: train_obs
+train_kwargs : 
+  freq : 24H
+  resample : 24
+
 max_values :
   dunedin : 220
   dunedin_combined : 220
-  dunedin_aero : 220
+  dunedin_aero : 220  
   tarahills : 200
   tauranga : 450
   christchurch : 180
