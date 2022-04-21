@@ -22,19 +22,6 @@ tfd = tfp.distributions
 def safe_log(x):
     return jnp.log(jnp.maximum(x, 1e-6))
 
-class FeedForward(nn.Module):
-    mult: int = 4
-    dropout: float = 0.5
-    features: int = 256
-
-    @nn.compact
-    def __call__(self, x, deterministic=False):
-        x = nn.Dense(self.features * self.mult)(x)
-        x = nn.gelu(x)
-        x = nn.Dropout(self.dropout,)(x, deterministic=deterministic)
-        x = nn.Dense(self.features)(x)
-        return x
-
 
 class MLP(nn.Module):
     features: Sequence[int]
@@ -48,73 +35,17 @@ class MLP(nn.Module):
                        dtype=self.dtype)
 
         for n, feat in enumerate(self.features[:-1]):
-            x_n = FeedForward(features=feat)(x, deterministic=not train)
+            x_n = nn.Dense(feat)(x)
+            x_n = nn.gelu(x_n)
+            x_n = norm()(x_n)
+            
             # Skip connection
             if n == 0:
                 x = nn.Dense(feat)(x)
-
-            x = x + ReScale()(x_n)
-            x = norm()(x)
-
+            x = x + x_n
+            
         x = nn.Dense(self.features[-1])(x)
         return x
-
-class MLPSimple(nn.Module):
-    features: Sequence[int]
-    act: Callable = nn.gelu
-    dtype: Any = jnp.float32
-    dropout : float = 0.5
-
-    @nn.compact
-    def __call__(self, x, train=True):
-        norm = partial(nn.LayerNorm,
-                       epsilon=1e-4,
-                       dtype=self.dtype)
-
-        for n, feat in enumerate(self.features[:-1]):
-            x = nn.Dense(feat)(x)
-            x = nn.gelu(x)
-            x = nn.Dropout(self.dropout,)(x,  deterministic=not train)
-            x = norm()(x)
-
-        x = nn.Dense(self.features[-1])(x)
-        return x
-
-        
-class Transformer(nn.Module):
-    depth: int = 4
-    n_latents: int = 64
-    n_heads: int = 8
-    head_features: int = 64
-    ff_mult: int = 4
-    num_out: int = 1
-
-    @nn.compact
-    def __call__(self, x, train=True):
-        emb = self.param("emb", init.normal(stddev=1e-4), (x.shape[-1],))
-        x = x + emb
-
-        x = nn.Dense(self.n_latents*self.n_latents)(x).reshape(-1,
-                                                               self.n_latents, self.n_latents)
-
-        attn = partial(
-            nn.SelfAttention,
-            num_heads=self.n_heads,
-        )
-
-        ff = partial(FeedForward, mult=self.ff_mult)
-        for i in range(self.depth):
-            x += ReScale()(attn()(x))
-            x += ReScale()(ff()(x))
-
-        return nn.Dense(self.num_out)(x.reshape(-1))
-
-
-class ReScale(nn.Module):
-    @nn.compact
-    def __call__(self, x):
-        scale = self.param("scale", init.normal(stddev=1e-4), (x.shape[-1],))
-        return scale * x
 
 
 class BernoulliSPG(nn.Module):
@@ -213,7 +144,7 @@ Dirichlet = partial(Dist, num_params=24, param_func=lambda p: jax_utils.pos_only
 
 class SPGSingleDist(nn.Module):
     dist: Callable
-    mlp_hidden: Sequence[int] = (256,)*3
+    mlp_hidden: Sequence[int] = (256,)*4
     min_pr: int = 0.1
 
     def setup(self, ):
