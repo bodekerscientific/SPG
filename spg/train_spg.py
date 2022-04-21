@@ -6,6 +6,9 @@
     You might need to set, as TF and JAX will both try grab the full gpu memory.
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
 """
+from dataclasses import replace
+import fire
+
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = 'false'
 
@@ -40,11 +43,8 @@ from tqdm import tqdm
 #Global flag to set a specific platform, must be used at startup.
 #jax.config.update('jax_platform_name', 'cpu')
 
-def make_qq(preds: list, targets: list, epoch: int, log, averages=[1, 8, 24], output_folder='./results/plots'):
+def make_qq(preds: list, targets: list, averages=[1, 8, 24]):
     # Ensure output folder exists
-    output_folder = Path(output_folder)
-    output_folder.mkdir(parents=True, exist_ok=True)
-
     _, axes = plt.subplots(1, len(averages), figsize=(len(averages)*8, 8))
     
     for ax, av in zip(axes, averages):
@@ -54,14 +54,19 @@ def make_qq(preds: list, targets: list, epoch: int, log, averages=[1, 8, 24], ou
             return np.convolve(arr, filt, mode='valid')
         ax.set_title(f'{av} average')
         qqplot(rolling(targets), rolling(preds), ax=ax, num_highlighted_quantiles=10, linewidth=0)
-    
-    output_path = output_folder / f'qq_{str(epoch).zfill(3)}.png'
+        
+def save_plot(name, epoch: int, log=None, output_folder='./results/plots'):
+    output_folder = Path(output_folder)
+    output_folder.mkdir(parents=True, exist_ok=True)
+
+    output_path = output_folder / f'{name}_{str(epoch).zfill(3)}.png'
     plt.savefig(output_path, transparent=False, dpi=150)
     plt.close()
     
     if log is not None:
         log({'qq_plot' : wandb.Image(str(output_path))})
 
+    
 def save_params(params, epoch : int, output_folder='./results/params'):
     # Ensure output folder exists
     output_folder = Path(output_folder)
@@ -85,7 +90,19 @@ def get_opt(params, max_lr=1e-3, min_lr=1e-6, max_steps=50000, spin_up_steps=300
 
     return opt, opt_state, params
 
-def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=None, num_epochs=100, min_pr=0.1, opt_kwargs={}):
+def set_tprime_batch(x, stats, t_prime):
+    # It is assumed that t_prime is the last variable in x
+    x_stats = stats['x']
+    return x.at[:, -1].set( (t_prime - x_stats['mean'][-1])/ x_stats['std'][-1])
+    
+def set_tprime(x, stats, t_prime):
+    # It is assumed that t_prime is the last variable in x
+    x_stats = stats['x']
+    return x.at[-1].set( (t_prime - x_stats['mean'][-1])/ x_stats['std'][-1])
+    
+
+def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=None, num_epochs=100, min_pr=0.1, opt_kwargs={},
+          make_tp_plots=False, use_lin_loss=True):
     rng = random.PRNGKey(42**2)
     x = jnp.ones(( num_feat,), dtype=jnp.float32)
 
@@ -101,7 +118,7 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
         # Negative Log Likelihood loss
         def nll(x, y):
             return -model.apply(params, x, y, False, method=model.log_prob)
-
+        
         # Use vamp to vectorize over the batch dim.
         return jax.vmap(nll)(x_b, y_b).mean()
 
@@ -116,9 +133,36 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
         log_p = jax.vmap(loss)(x_b, y_b, rngs)
         return (-log_p).mean()
     
+    
+    
+    @jax.jit
+    def tr_lin_loss_func(params, x_b, y_b, rng):
+        nll = tr_loss_func(params, x_b, y_b, rng)
+        
+        def loss_lin(x, rng):    
+            t_p_1, t_p_2, t_p_3 = random.uniform(rng, (3,))
+            
+            # Generate some random samples for t_prime
+            t_p_1 *= 1.5 
+            t_p_2 = t_p_2*2 + 0.25 + t_p_1
+            t_p_3 = 2*t_p_3 + t_p_2 + 0.25
+            
+            x_pred_1 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_1), rng,  False, method=model.sample, rngs = {'dropout': rng})
+            x_pred_2 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_2), rng, False, method=model.sample, rngs = {'dropout': rng}) 
+            x_pred_3 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_3), rng, False, method=model.sample, rngs = {'dropout': rng})
+            
+            def loss():
+                return jnp.abs((x_pred_2 - x_pred_1)/(t_p_2 - t_p_1)  - (x_pred_3 - x_pred_1)/(t_p_3 - t_p_1))
+            
+            return jax.lax.cond((x_pred_1 > 0) & (x_pred_2 > 0) & (x_pred_3 > 0), loss, lambda :  0.0)
+            
+        rngs = random.split(rng, num=len(x_b))
+        
+        return nll + jax.vmap(loss_lin)(x_b, rngs).mean()
+    
     @jax.jit
     def step(x, y, params, opt_state, rng):
-        loss, grads = jax.value_and_grad(tr_loss_func)(params.fast, x, y, rng)
+        loss, grads = jax.value_and_grad(tr_lin_loss_func)(params.fast, x, y, rng)
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
 
@@ -138,6 +182,26 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
         pred = jax.vmap(get_sample)(x_b, rngs)
         return loss, pred, random.split(rng)[1]
 
+    def valid_loop(rng, replace_tprime = None):
+        val_loss = []
+        preds = []
+        targets = []
+        for batch in valid_loader:
+            x, y = batch
+            if replace_tprime is not None:
+                #x.at
+                x = set_tprime_batch(x, valid_loader.dataset.stats, replace_tprime)
+                
+            loss, pred, rng = val_step(x, y, params, rng)
+            val_loss.append(loss)
+            preds.append(pred)
+            targets.append(y)
+
+        preds = jnp.concatenate(preds, axis=None)
+        targets = jnp.concatenate(targets, axis=None)
+    
+        return preds, targets, val_loss, rng
+    
     best_loss = jnp.inf
     for epoch in range(1, num_epochs+1):
         tr_loss = []
@@ -148,24 +212,12 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
             if log is not None:
                 wandb.log({'train_loss_step' : loss})
             tr_loss.append(loss)
-            tr_it.set_description(f'Train loss : {jnp.stack(tr_loss[-50:]).mean():.3f}')
+            tr_it.set_description(f'Train loss : {jnp.stack(0[-50:]).mean():.3f}')
         
         if cfg is not None:
             param_path = save_params(params.slow, epoch, output_folder=cfg.param_path)
 
-        # Calculate the validation loss and generate some samples.
-        val_loss = []
-        preds = []
-        targets = []
-        for batch in valid_loader:
-            x, y = batch
-            loss, pred, rng = val_step(x, y, params, rng)
-            val_loss.append(loss)
-            preds.append(pred)
-            targets.append(y)
-
-        preds = jnp.concatenate(preds, axis=None)
-        targets = jnp.concatenate(targets, axis=None)
+        preds, targets, val_loss, rng = valid_loop(rng)
 
         print(f'preds std : {preds.std()}')
         print(f'target std : {targets.std()}')
@@ -174,8 +226,8 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
         dd_target = (targets < min_pr).sum()/targets.size
         dd_pred = (preds < min_pr).sum()/preds.size
         
-        val_loss = jnp.stack(val_loss).mean()
         tr_loss = jnp.stack(tr_loss).mean()
+        val_loss = jnp.stack(val_loss).mean()
 
         if log is not None:    
             log({'train_loss_epoch': tr_loss,
@@ -188,10 +240,24 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
               f' {tr_loss:.4f}, dry day prob {dd_pred:.4f}, expected {dd_target:.4f}')
         
         if cfg is not None:
-            make_qq(preds[0:10000], targets[0:10000], epoch, log, output_folder=cfg.plot_path)
+            plot_folder = cfg.plot_path
         else:
-            make_qq(preds[0:10000], targets[0:10000], epoch, log)
-
+            plot_folder = './results/plots'
+        
+        make_qq(preds[0:10000], targets[0:10000])
+        save_plot('qq', epoch, log, output_folder = plot_folder)
+        
+        if make_tp_plots:
+            val_tprime = np.arange(0, 2.5, 0.2)
+            
+            losses_tprime = []
+            for t_prime in val_tprime:
+                _, _, val_loss_t, rng = valid_loop(rng, replace_tprime=t_prime)
+                losses_tprime.append(jnp.stack(val_loss_t).mean())
+            
+            plt.plot(val_tprime, losses_tprime)
+            save_plot('tprime_loss', epoch, log, output_folder = plot_folder)
+            
         # if epoch > 2 and val_loss < best_loss:
         #     best_loss = val_loss
         #     wandb.log_artifact( str(param_path), name='params_' + str(epoch).zfill(3), type='training_weights') 
@@ -291,9 +357,11 @@ def train_wh(cfg, location, bs=256, load_stats=False, data_obs=None, **kwargs):
     train(cfg=cfg, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
 
 
-def train_obs(model, cfg, load_stats=False, params_path=None, freq='H', resample=32, bs=256, param_init=None, ds_kwargs = {}, **kwargs):
-    data = data_utils.load_nc(cfg.input_file)
+def train_obs(cfg, load_stats=False, params_path=None, freq='H', resample=None, bs=256, param_init=None, ds_kwargs = {}, **kwargs):
+    model, model_dict = get_model(cfg.version)
 
+    data = data_utils.load_nc(cfg.input_file)
+    
     if resample is not None:
         assert freq == 'H'
         freq = f'{resample}H'
@@ -377,14 +445,20 @@ def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20, train
         train_obs(model, cfg_32H, load_stats=True,  bs=bs, log=logger, num_epochs=20, param_init=param_wh)
         wandb.finish()
 
+def run(location, cfg_name, model_version):
+    cfg = get_config(cfg_name, version=model_version, location=location)
+    train_func = globals()[cfg.train_func]
+    train_func(cfg, **cfg.train_kwargs)
+
 if __name__ == '__main__':
-    if len(sys.argv) == 3:
-        location = sys.argv[1]
-        version = sys.argv[2]
-    else:
-        raise ValueError('You need to pass the run location, version and epoch number' \
-                          ' as an argument, e.g python spg/train_spg.py dunedin v7')
-    wh_fine_tune_obs(location, version=version)
+    fire.Fire(run)
+    # if len(sys.argv) == 3:
+    #     location = sys.argv[1]
+    #     version = sys.argv[2]
+    # else:
+    #     raise ValueError('You need to pass the run location, version and epoch number' \
+    #                       ' as an argument, e.g python spg/train_spg.py dunedin v7')
+    # wh_fine_tune_obs(location, version=version)
     
     #bs = 256
     #version_split = version + '_split'
