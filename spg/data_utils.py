@@ -9,7 +9,8 @@ import random
 
 locations = {'dunedin' : (-45.879224, 170.502686),
              'tauranga' : (-37.713386, 176.116161),
-             'christchurch' : (-43.487553, 172.534807)
+             'christchurch' : (-43.487553, 172.534807),
+             'auckland' : (-36.854926, 174.761083)
 }
 
 @lru_cache
