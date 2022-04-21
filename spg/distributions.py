@@ -98,6 +98,20 @@ class TFPDist(Dist):
         res = fit_func(loss_func, self._params)
         self._params = res.x
 
+    def get_params(self, cond=None):
+        params = self._params
+        params = self.param_post(self.param_func(params, cond=cond))
+        return params
+    
+    def log_prob(self, data, cond=None, eps=1e-12):
+        params = self.get_params(cond)
+        return  -(self.dist(*params).log_prob(data+eps)).mean()
+    
+    def sample(self, num, rng, cond=None):
+        p = random.uniform(rng, (num,))
+        params = self.get_params(cond)
+        return  self.dist(*params).quantile(p)
+    
     def get_ss_params(self, cond=None):
         raise NotImplementedError('Need to override this method')
 
@@ -120,6 +134,23 @@ class TFWeibull(TFPDist):
             return jax_utils.pos_only(params)
         
         super().__init__(tfd.Weibull, ss.weibull_min, 'TFWeibull', num_params=2, 
+                         param_init=param_init, param_post=param_post, **kwargs)
+
+    def get_ss_params(self, cond=None):
+        params = self.get_params(cond)
+        return params[0], 0.0, params[1]
+    
+    
+class TFGamma(TFPDist):
+    def __init__(self, param_init=None, **kwargs):
+        if param_init is None:
+            param_init = [0.75, 1.0]
+
+        # Ensure the scale and shape params are always positive
+        def param_post(params):
+            return jax_utils.pos_only(params)
+        
+        super().__init__(tfd.Gamma, ss.gamma, 'TFGamma', num_params=2, 
                          param_init=param_init, param_post=param_post, **kwargs)
 
     def get_ss_params(self, cond=None):
