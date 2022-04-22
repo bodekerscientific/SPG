@@ -80,7 +80,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
     
     return output_path
 
-def get_opt(params, max_lr=1e-3, min_lr=1e-6, max_steps=50000, spin_up_steps=300, wd=1e-7, lookahead=5):
+def get_opt(params, max_lr=1e-3, min_lr=1e-6, max_steps=5000, spin_up_steps=300, wd=1e-7, lookahead=5):
     sched = optax.warmup_cosine_decay_schedule(min_lr, max_lr, spin_up_steps, max_steps, min_lr)
     opt = optax.adamw(sched, weight_decay=wd)
     opt = optax.apply_if_finite(opt, 20)
@@ -101,7 +101,7 @@ def set_tprime(x, stats, t_prime):
     return x.at[-1].set( (t_prime - x_stats['mean'][-1])/ x_stats['std'][-1])
     
 
-def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=None, num_epochs=100, min_pr=0.1, opt_kwargs={},
+def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=None, num_epochs=40, min_pr=0.1, opt_kwargs={},
           make_tp_plots=False, use_lin_loss=True):
     rng = random.PRNGKey(42**2)
     x = jnp.ones(( num_feat,), dtype=jnp.float32)
@@ -147,7 +147,7 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
             t_p_2 = t_p_2*2 + 0.25 + t_p_1
             t_p_3 = 2*t_p_3 + t_p_2 + 0.25
             
-            x_pred_1 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_1), rng,  False, method=model.sample, rngs = {'dropout': rng})
+            x_pred_1 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_1), rng, False, method=model.sample, rngs = {'dropout': rng})
             x_pred_2 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_2), rng, False, method=model.sample, rngs = {'dropout': rng}) 
             x_pred_3 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_3), rng, False, method=model.sample, rngs = {'dropout': rng})
             
@@ -162,7 +162,7 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
     
     @jax.jit
     def step(x, y, params, opt_state, rng):
-        loss, grads = jax.value_and_grad(tr_lin_loss_func)(params.fast, x, y, rng)
+        loss, grads = jax.value_and_grad(tr_loss_func)(params.fast, x, y, rng)
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
 
@@ -212,7 +212,7 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
             if log is not None:
                 wandb.log({'train_loss_step' : loss})
             tr_loss.append(loss)
-            tr_it.set_description(f'Train loss : {jnp.stack(0[-50:]).mean():.3f}')
+            tr_it.set_description(f'Train loss : {jnp.stack(tr_loss[-50:]).mean():.3f}')
         
         if cfg is not None:
             param_path = save_params(params.slow, epoch, output_folder=cfg.param_path)
@@ -357,18 +357,13 @@ def train_wh(cfg, location, bs=256, load_stats=False, data_obs=None, **kwargs):
     train(cfg=cfg, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
 
 
-def train_obs(cfg, load_stats=False, params_path=None, freq='H', resample=None, bs=256, param_init=None, ds_kwargs = {}, **kwargs):
+def train_obs(cfg, load_stats=False, params_path=None, freq='H', bs=256, param_init=None, **kwargs):
     model, model_dict = get_model(cfg.version)
 
     data = data_utils.load_nc(cfg.input_file)
-    
-    if resample is not None:
-        assert freq == 'H'
-        freq = f'{resample}H'
-        data = data_utils.average(data, resample)
 
     ds_train, ds_valid = data_loader.get_datasets(data, num_valid=cfg.num_valid, load_stats=load_stats, stats_path=cfg.stats_path, 
-                                                  freq=freq, ds_cls=data_loader.PrecipitationDataset, **ds_kwargs)
+                                                  freq=freq, ds_cls=data_loader.PrecipitationDataset, **model_dict['loader_args'])
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
     

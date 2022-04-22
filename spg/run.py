@@ -162,7 +162,7 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_sa
                 # Denormalise
                 out  = data_loader.inverse_stats(stats['y'], out)
                 if out > max_pr:
-                    print(f'Got a 1{freq} precipitation of {out}')
+                    print(f'Got a 1 in {freq} precipitation of {out}')
 
         output.values[n] =  out
 
@@ -247,10 +247,11 @@ def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg,
     return output
 
 def run_hourly():
-    if len(sys.argv) == 4:
+    if len(sys.argv) == 5:
         location = sys.argv[1]
         version = sys.argv[2]
         param_epoch = int(sys.argv[3])
+        base_config = sys.argv[4]
     else:
         raise ValueError('You need to pass the run location, version and epoch number' \
                           ' as an argument, e.g python spg/run.py dunedin v7 12')
@@ -258,18 +259,19 @@ def run_hourly():
 
     print(f'Training {version} for {location} using epoch {param_epoch}')
 
-    cfg = train_spg.get_config('base_hourly', version, location, param_epoch)
+    cfg = train_spg.get_config(base_config, version, location, param_epoch)
     data = data_utils.load_nc(cfg.input_file)
+    
     print(cfg)
     max_pr = cfg['max_values'][location]
 
     stats = data_loader.open_stats(cfg.stats_path)
     param_path = get_params_path(cfg, param_epoch)
 
-    preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, freq='H', max_pr=max_pr)
+    preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, max_pr=max_pr, **cfg.train_kwargs)
     data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'))
 
-    run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H', max_pr=max_pr)
+    #run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H', max_pr=max_pr)
 
 def run_save_split(ens_args, cfg, params_path : Path, stats, **kwargs):
     fname, idx = ens_args
@@ -359,4 +361,4 @@ def run_multiscale():
 #     run_pool(output_folder=output_path_ens, file_pre=fname_obs, **run_kwargs)
 
 if __name__ == '__main__':
-    run_multiscale()
+    run_hourly()
