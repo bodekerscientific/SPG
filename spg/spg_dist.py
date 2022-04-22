@@ -22,6 +22,23 @@ tfd = tfp.distributions
 def safe_log(x):
     return jnp.log(jnp.maximum(x, 1e-6))
 
+class ReZero(nn.Module):
+    @nn.compact
+    def __call__(self, x):
+        scale = self.param("scale", init.normal(stddev=1e-4), (1,))
+        return scale * x
+
+class FeedForward(nn.Module):
+    features: int = 256
+    act: Callable = nn.gelu
+
+    @nn.compact
+    def __call__(self, x, deterministic=False):
+        x = nn.Dense(self.features)(x)
+        x = nn.gelu(x)
+        x = nn.Dense(self.features)(x)
+        return x
+
 
 class MLP(nn.Module):
     features: Sequence[int]
@@ -35,22 +52,22 @@ class MLP(nn.Module):
                        dtype=self.dtype)
 
         for n, feat in enumerate(self.features[:-1]):
-            x_n = nn.Dense(feat)(x)
-            x_n = nn.gelu(x_n)
-            x_n = norm()(x_n)
+            x_n = FeedForward(features=feat)(x, deterministic=not train)
             
             # Skip connection
             if n == 0:
                 x = nn.Dense(feat)(x)
-            x = x + x_n
-            
+
+            x = self.act(x + ReZero()(x_n))
+            x = norm()(x)
+
         x = nn.Dense(self.features[-1])(x)
         return x
-
-
+    
+    
 class BernoulliSPG(nn.Module):
     dist: Callable
-    mlp_hidden: Sequence[int] = (256,)*4
+    mlp_hidden: Sequence[int] = (512,)*4
     min_pr: int = 0.1
 
     def setup(self, ):
