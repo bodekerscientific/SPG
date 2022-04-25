@@ -8,6 +8,7 @@ def combine_tsv(paths):
     if len(dfs) > 1:
         df = pd.concat(dfs, sort=True)
         df = df[~df.index.duplicated(keep='last')]
+        df= df.sort_index()
     else:
         df = dfs[0]
         
