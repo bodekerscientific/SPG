@@ -114,17 +114,20 @@ def setup_output(data, feat_samples, start_date, end_date, spin_up_steps=100, fr
     output.iloc[0:feat_samples] = pr_re[idx_valid-feat_samples+1:idx_valid+1].values 
     return output
 
-def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_samples = 6*24, spin_up_steps=1000, 
-                start_date=None, end_date=None, rng=None, sce='ssp245', use_tqdm=True, freq='H', max_pr=100):
+def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, cond_samples = 8, spin_up_steps=1000, 
+                start_date=None, end_date=None, rng=None, sce='ssp245', use_tqdm=True, freq='H', max_pr=100, **kwargs):
 
-    #assert freq in ['H', 'D'], 'Only hourly and daily SPGs are supported at this time.'
+    assert freq in ['H', 'D'], 'Only hourly and daily SPGs are supported at this time.'
     model, model_dict = train_spg.get_model(cfg.version)
 
     
     feat_func =  data_loader.generate_features if freq == 'H' else data_loader.generate_features_daily
-    feat_func = partial(feat_func, **model_dict['loader_args'])
+
+    if 'loader_args' in model_dict:
+         feat_func = partial(feat_func, **model_dict['loader_args'])
     
-    feat_func_norm = lambda x : data_loader.apply_stats(stats['x'], feat_func(x, sce=sce)[0],)
+    def feat_func_norm(x):
+        return data_loader.apply_stats(stats['x'], feat_func(x, sce=sce)[0],)
 
     if rng is None:
         rng = random.PRNGKey(np.random.randint(1e10))
@@ -133,21 +136,21 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_sa
     if end_date is None:
         end_date = data.index.max()
     
-    output = setup_output(data, feat_samples, start_date, end_date, spin_up_steps=spin_up_steps, freq=freq)
+    output = setup_output(data, cond_samples, start_date, end_date, spin_up_steps=spin_up_steps, freq=freq)
 
-    num_feat = feat_func_norm(output.iloc[0:feat_samples+1]).shape[1]
+    num_feat = feat_func_norm(output.iloc[0:cond_samples+1]).shape[1]
     params = train_spg.load_params(model, params_path, num_feat)
     
     @jax.jit
     def sample_func(x, rng):
         return model.apply(params, x, rng, method=model.sample)
 
-    n_range = range(feat_samples, len(output))
+    n_range = range(cond_samples, len(output))
     if use_tqdm:
         n_range = tqdm(n_range)
 
     for n in n_range:
-        subset_cond = output.iloc[n - feat_samples:n+1]
+        subset_cond = output.iloc[n - cond_samples:n+1]
         x = feat_func_norm(subset_cond)
         
         # Sometimes (very rarely) we get an np.nan
@@ -155,7 +158,7 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, feat_sa
         out = jnp.nan
         while(not jnp.isfinite(out) or out > max_pr):
             rng, sample_rng = random.split(rng)
-            out = sample_func(x[0], sample_rng)
+            out = sample_func(x[-1], sample_rng)
             if not jnp.isfinite(out):
                 print('Got invalid value!!')
             else:
@@ -271,7 +274,7 @@ def run_hourly():
     preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, max_pr=max_pr, **cfg.train_kwargs)
     data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'))
 
-    #run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, freq='H', max_pr=max_pr)
+    run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, max_pr=max_pr, **cfg.train_kwargs)
 
 def run_save_split(ens_args, cfg, params_path : Path, stats, **kwargs):
     fname, idx = ens_args

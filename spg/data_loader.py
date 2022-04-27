@@ -217,7 +217,7 @@ def save_stats(stats, stats_path):
     with open(stats_path, 'w') as f:
         # Can't save np array to json so convert to a list first
         f.write(json.dumps({k: {'mean': v['mean'].tolist(),
-                                'std': v['std'].tolist()} for k, v in stats.items()}, indent=4))
+                                'std':  v['std'].tolist()} for k, v in stats.items()}, indent=4))
     return stats
 
 
