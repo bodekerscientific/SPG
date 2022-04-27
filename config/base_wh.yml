@@ -1,17 +1,16 @@
-output_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/daily/
+output_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/daily_wh/
 input_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data/
-ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_daily/
+ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_daily_wh/
 
 num_ens : 10
 num_valid : 1000
 
-train_func: train_obs
+train_func: train_fine_tune_wh
 train_kwargs : 
   freq : D
   opt_kwargs :
     max_steps : 50000
-    
-
+  
 max_values :
   dunedin : 220
   dunedin_combined : 220
@@ -20,7 +19,6 @@ max_values :
   tauranga : 400
   christchurch : 180
   auckland : 250
-  fake-autocorr : 10000
 
 
 scenarios :

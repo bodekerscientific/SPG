@@ -5,7 +5,6 @@ ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly/
 train_func: train_obs
 train_kwargs : 
   freq : H
-  make_tp_plots : True
 
 num_ens : 10
 num_valid : 20000
@@ -16,18 +15,19 @@ max_values :
   dunedin_aero : 40
   tarahills : 50
   tauranga : 80
+  auckland : 80
   christchurch : 40
 
 scenarios :
   - rcp85
-  - ssp585
-  - rcp26
-  - rcp45
-  - rcp60
-  - ssp119
-  - ssp126
-  - ssp245
-  - ssp370
-  - ssp434
-  - ssp460
+  # - ssp585
+  # - rcp26
+  # - rcp45
+  # - rcp60
+  # - ssp119
+  # - ssp126
+  # - ssp245
+  # - ssp370
+  # - ssp434
+  # - ssp460
   
