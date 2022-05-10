@@ -6,8 +6,8 @@ import seaborn as sns
 import numpy as np
 import statsmodels.api as sm
 #%%
-target_loc = 'auckland'
-target_epoch = 11
+target_loc = 'christchurch'
+target_epoch = 23
 
 #%%
 
@@ -42,10 +42,10 @@ def fit_and_plot(x, y, **kwargs):
 
 #%%
 
-input = f'/mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hourly/{target_loc}.nc'
+input = f'/mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data/{target_loc}.nc'
 ds_target = xr.open_dataset(input).load()
 #%%
-input_folder = Path(f'/mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly/v8/{target_loc}_epoch_{str(target_epoch).zfill(3)}/')
+input_folder = Path(f'/mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_daily/v8/{target_loc}_epoch_{str(target_epoch).zfill(3)}/')
 files = list(input_folder.glob(f'{target_loc}_*.nc'))
 
 #%%

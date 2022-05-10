@@ -114,11 +114,13 @@ def setup_output(data, feat_samples, start_date, end_date, spin_up_steps=100, fr
     output.iloc[0:feat_samples] = pr_re[idx_valid-feat_samples+1:idx_valid+1].values 
     return output
 
-def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, cond_samples = 8, spin_up_steps=1000, 
+def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, spin_up_steps=1000, 
                 start_date=None, end_date=None, rng=None, sce='ssp245', use_tqdm=True, freq='H', max_pr=100, **kwargs):
 
     assert freq in ['H', 'D'], 'Only hourly and daily SPGs are supported at this time.'
-    model, model_dict = train_spg.get_model(cfg.version)
+    cond_samples = 8 if freq == 'D' else 8*24
+    
+    model, model_dict = train_spg.get_model(cfg.version, stats=stats)
 
     
     feat_func =  data_loader.generate_features if freq == 'H' else data_loader.generate_features_daily

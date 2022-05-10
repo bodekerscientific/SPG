@@ -93,9 +93,15 @@ class BernoulliSPG(nn.Module):
         return jax.lax.cond(
             p_rain <= p_d,
             lambda: jnp.zeros(1, dtype=x.dtype)[0],
-            lambda: self.dist.ppf(dist_params, p_dist)
+            lambda: self.dist.ppf(dist_params, p_dist) + self.min_pr
         )
+        
+    def ppf_wet(self, x, p, train=True):
+        dist_params = self.mlp(x, train=train)
+        _, dist_params = self._split_params(dist_params)
 
+        return self.dist.ppf(dist_params, p)  + self.min_pr
+    
     def log_prob(self, x, y, train=True):
         dist_params = self.mlp(x, train=train)
 
@@ -105,7 +111,7 @@ class BernoulliSPG(nn.Module):
         return jax.lax.cond(
             y <= self.min_pr,
             lambda: p_d,
-            lambda: p_r + self.dist.log_prob(dist_params, y)
+            lambda: p_r + self.dist.log_prob(dist_params, y - self.min_pr + 1e-8)
         )
 
 
@@ -162,7 +168,7 @@ Dirichlet = partial(Dist, num_params=24, param_func=lambda p: jax_utils.pos_only
 class SPGSingleDist(nn.Module):
     dist: Callable
     mlp_hidden: Sequence[int] = (256,)*4
-    min_pr: int = 0.1
+    min_pr: int = 0.1001
 
     def setup(self, ):
         self.num_params = self.dist.num_params

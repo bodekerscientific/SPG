@@ -10,8 +10,9 @@ input_path = Path('/mnt/datasets/NationalClimateDatabase/NetCDFFilesByVariableAn
 
 locations = {
     'dunedin' : (-45.89, 170.501),
-    # 'christchurch' : (-43.530150, 172.635164),
-    # 'tauranga' : (-37.687027, 176.165421)
+    'christchurch' : (-43.530150, 172.635164),
+    'tauranga' : (-37.687027, 176.165421),
+    'auckland' : (-36.846104, 174.765097)
 }
 
 def load_close_stations(files, target_lat, target_lon, max_dist=40, max_height=70):
@@ -23,7 +24,7 @@ def load_close_stations(files, target_lat, target_lon, max_dist=40, max_height=7
             if ds.station_height.values.size == 1:
                 if dist < max_dist and ds.station_height.values < max_height:
                     out[ds.attrs["site name"]] = ds.load()
-                    print(f'Found station {ds.attrs["site name"]} with {len(ds.precipitation)} values, from {ds.time.min().dt.date.values} to {ds.time.max().dt.date.values} and distance {dist:.1f}km') 
+                    print(f'Found station {ds.attrs["site name"]}, {fname.name} with {len(ds.precipitation)} values, from {ds.time.min().dt.date.values} to {ds.time.max().dt.date.values} and distance {dist:.1f}km') 
     return out
     # # Select only the hourly values
     # ds = ds.sel(time=ds.period.values == 1)

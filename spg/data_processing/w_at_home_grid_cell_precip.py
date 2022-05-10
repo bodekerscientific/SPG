@@ -27,9 +27,12 @@ def get_closest(lat, lng, file_path_list):
 
 if __name__=="__main__":
 
-    ensembles = ["batch_870_ant","batch_871_ant","batch_872_ant","batch_794_nat","batch_793_ant"] #Add to list 
+    ensembles = ["batch_870_ant", "batch_871_ant", "batch_872_ant",] #Add to list 
     
     for loc, (latitude, longitude) in locations.items():
+        if loc != 'auckland':
+            continue
+        
         out_path = f"/mnt/temp/projects/otago_uni_marsden/data_keep/weather_at_home/{loc}"
 
         if not os.path.exists(out_path):

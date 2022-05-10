@@ -43,10 +43,12 @@ from tqdm import tqdm
 #Global flag to set a specific platform, must be used at startup.
 #jax.config.update('jax_platform_name', 'cpu')
 
-def make_qq(preds: list, targets: list, averages=[1, 8, 24]):
+def make_qq(preds: list, targets: list, averages=[1, 8, 24], title=None):
     # Ensure output folder exists
     _, axes = plt.subplots(1, len(averages), figsize=(len(averages)*8, 8))
-    
+    if title:
+        plt.suptitle(title)
+        
     for ax, av in zip(axes, averages):
         # calculate a n-day average.
         def rolling(arr):
@@ -80,7 +82,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
     
     return output_path
 
-def get_opt(params, max_lr=1e-3, min_lr=1e-6, max_steps=5000, spin_up_steps=300, wd=0.01, lookahead=5):
+def get_opt(params, max_lr=1e-3, min_lr=1e-8, max_steps=50000, spin_up_steps=300, wd=0.01, lookahead=5):
     sched = optax.warmup_cosine_decay_schedule(min_lr, max_lr, spin_up_steps, max_steps, min_lr)
     opt = optax.adamw(sched, weight_decay=wd)
     opt = optax.apply_if_finite(opt, 20)
@@ -101,11 +103,12 @@ def set_tprime(x, stats, t_prime):
     return x.at[-1].set( (t_prime - x_stats['mean'][-1])/ x_stats['std'][-1])
     
 
-def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=None, num_epochs=40, min_pr=0.1, opt_kwargs={},
+def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=None, num_epochs=40, opt_kwargs={},
           make_tp_plots=False, use_lin_loss=True):
+    
     rng = random.PRNGKey(42**2)
     x = jnp.ones(( num_feat,), dtype=jnp.float32)
-
+    
     if params is None:
         params = model.init(random.PRNGKey(0), x, rng, train=False)
 
@@ -124,7 +127,7 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
     def tr_nll(params, x_b, y_b, rng):
         # Negative Log Likelihood loss
         def loss(x, y, rng_drop):
-            return model.apply(params, x, y, True, method=model.log_prob, rngs = {'dropout': rng_drop})#*(x[1]+4)**2
+            return model.apply(params, x, y, True, method=model.log_prob, rngs = {'dropout': rng_drop})
             
         # Use vamp to vectorize over the batch dim.
         rngs = random.split(rng, num=len(x_b))
@@ -137,39 +140,45 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
     def tr_lin_loss_func(params, x_b, y_b, rng):
         loss = tr_nll(params, x_b, y_b, rng)
         
-        def loss_lin(x, rng):    
-            t_p_1, t_p_2, t_p_3 = random.uniform(rng, (3,))
+        def loss_lin(x, rng, eps=1e-5):    
+            t_p_1, t_p_2, t_p_3, p_dist = random.uniform(rng, (4,))
             
             # Generate some random samples for t_prime
             t_p_1 *= 1.5 
             t_p_2 = t_p_2*2 + 0.25 + t_p_1
             t_p_3 = 2*t_p_3 + t_p_2 + 0.25
             
-            x_pred_1 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_1), rng, False, method=model.sample, rngs = {'dropout': rng})
-            x_pred_2 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_2), rng, False, method=model.sample, rngs = {'dropout': rng}) 
-            x_pred_3 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_3), rng, False, method=model.sample, rngs = {'dropout': rng})
+            x_pred_1 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_1), p_dist, False, method=model.ppf_wet, rngs = {'dropout': rng})
+            x_pred_2 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_2), p_dist, False, method=model.ppf_wet, rngs = {'dropout': rng}) 
+            x_pred_3 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_3), p_dist, False, method=model.ppf_wet, rngs = {'dropout': rng})
             
-            def loss():
-                return jnp.abs((x_pred_2 - x_pred_1)/(t_p_2 - t_p_1)  - (x_pred_3 - x_pred_1)/(t_p_3 - t_p_1))
+            def loss(): 
+                r1 = jnp.log((eps + x_pred_2)/(x_pred_1 + eps))/(t_p_2 - t_p_1)
+                r2 = jnp.log((eps + x_pred_3)/(x_pred_1 + eps))/(t_p_3 - t_p_1)                          
+                return jnp.abs(r1 - r2)
+             
+                #return jnp.abs((x_pred_2 - x_pred_1)/(t_p_2 - t_p_1)  - (x_pred_3 - x_pred_1)/(t_p_3 - t_p_1))
             
-            cond = (x_pred_1 > 0) & (x_pred_2 > 0) & (x_pred_3 > 0) & (x_pred_1 < 200) & (x_pred_2 < 200) & (x_pred_3 < 200)
+            # For numerical stability at the start of training
+            cond = (x_pred_1 < 200) & (x_pred_2 < 200) & (x_pred_3 < 200)
             
             return jax.lax.cond(cond, loss, lambda :  0.0)
         
         if use_lin_loss:
             rngs = random.split(rng, num=len(x_b))
-            loss +=  5*jax.vmap(loss_lin)(x_b, rngs).mean()
-        
+            loss += jax.vmap(loss_lin)(x_b, rngs).mean() 
+            
         return loss
         
     
     @jax.jit
     def step(x, y, params, opt_state, rng):
-        loss, grads = jax.value_and_grad(tr_lin_loss_func)(params.fast, x, y, rng)
+        rng, rng_fit = random.split(rng)
+        loss, grads = jax.value_and_grad(tr_lin_loss_func)(params.fast, x, y, rng_fit)
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
 
-        return loss, params, opt_state, random.split(rng)[1]
+        return loss, params, opt_state, rng
     
     @jax.jit
     def val_step(x_b, y_b, params, rng):
@@ -220,33 +229,39 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
             param_path = save_params(params.slow, epoch, output_folder=cfg.param_path)
 
         preds, targets, val_loss, rng = valid_loop(rng)
+        preds = preds.at[preds <=  model.min_pr].set(0.0)
 
         print(f'preds std : {preds.std()}')
         print(f'target std : {targets.std()}')
+        
 
         # Calculate the expected number of rain days
-        dd_target = (targets < min_pr).sum()/targets.size
-        dd_pred = (preds < min_pr).sum()/preds.size
+        dd_target = (targets <=  model.min_pr).sum()/targets.size
+        dd_pred = (preds <=  model.min_pr).sum()/preds.size
         
         tr_loss = jnp.stack(tr_loss).mean()
         val_loss = jnp.stack(val_loss).mean()
 
+        rms_sorted_loss = jnp.mean((jnp.sort(targets) - jnp.sort(preds))**2)**0.5
+        
         if log is not None:    
             log({'train_loss_epoch': tr_loss,
                 'val_loss': val_loss,
                 'epoch': epoch,
                 'dd_val' : dd_pred,
-                'dd_mae' : jnp.abs(dd_target - dd_pred)})
+                'dd_mae' : jnp.abs(dd_target - dd_pred),
+                'rms_loss' : rms_sorted_loss})
 
-        print(f'{epoch}/{num_epochs}, valid loss : {val_loss:.4f}, train loss'
-              f' {tr_loss:.4f}, dry day prob {dd_pred:.4f}, expected {dd_target:.4f}')
+        print(f'{epoch}/{num_epochs}, valid loss : {val_loss:.4f}, train loss  {tr_loss:.4f}, '
+              f'rms loss {rms_sorted_loss:.4f}, dry day prob {dd_pred:.4f}, expected {dd_target:.4f}')
         
         if cfg is not None:
             plot_folder = cfg.plot_path
         else:
             plot_folder = './results/plots'
         
-        make_qq(preds[0:10000], targets[0:10000])
+        title = f'Validation loss: {val_loss:.4f}, rms loss {rms_sorted_loss:.4f} '
+        make_qq(preds[0:20000], targets[0:20000], title=title)
         save_plot('qq', epoch, log, output_folder = plot_folder)
         
         if make_tp_plots:
@@ -289,7 +304,7 @@ def parse_model(model):
         raise ValueError(f'Invalid model {model}') 
     
 
-def get_model(version=None, path=None):
+def get_model(version=None, path=None, stats=None):
     assert not (path is None and version is None), 'You need to pass a path or a version of the model.'
     
     if path is None:
@@ -302,7 +317,12 @@ def get_model(version=None, path=None):
         
     dist = parse_model(model_dict['model'])
     base_cls = getattr(spg_dist, model_dict['base_spg'])
+    model = base_cls(dist)
     
+    if stats is not None:
+        model.min_pr /= stats['y']['std']
+        print(model.min_pr)
+        
     return base_cls(dist), model_dict
 
 
@@ -344,18 +364,20 @@ def get_config(name, version, location, ens=None, output_path=None):
 
 def train_wh(cfg, location, bs=256, load_stats=False, data_obs=None, freq='D', **kwargs):
     print('Loading weather@home')
-    model, model_dict = get_model(cfg.version)
-    
+    _, model_dict = get_model(cfg.version)
+
     loader_args = model_dict['loader_args'] if 'loader_args' in model_dict else {}
 
-    # Apply bias correction of 1.75
-    wh_ens = data_utils.load_wh(location=location, num_ens=500, mult_factor=1.75)
+    wh_ens = data_utils.load_wh(location=location, num_ens=500)
     print(f'Loaded {len(wh_ens)} ens')
 
     ds_train, ds_valid = data_loader.get_datasets(wh_ens, num_valid=50, is_wh=True, ds_cls=data_loader.PrecipitationDatasetWH,
                                                   stats_path=cfg.stats_path, load_stats=load_stats, **loader_args)
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
+    
+    model, model_dict = get_model(cfg.version, stats=val_loader.dataset.stats)
+
     num_feat = len(ds_train[0][0])
     print(f'Num features {num_feat}')
 
@@ -363,7 +385,7 @@ def train_wh(cfg, location, bs=256, load_stats=False, data_obs=None, freq='D', *
 
 
 def train_obs(cfg, model=None, load_stats=False, params_path=None, freq='H', bs=256, param_init=None, **kwargs):
-    model, model_dict = get_model(cfg.version)
+    _, model_dict = get_model(cfg.version)
 
     data = data_utils.load_nc(cfg.input_file)
     
@@ -373,6 +395,8 @@ def train_obs(cfg, model=None, load_stats=False, params_path=None, freq='H', bs=
                                                   freq=freq, ds_cls=data_loader.PrecipitationDataset, **loader_args)
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
+    
+    model, model_dict = get_model(cfg.version, stats=val_loader.dataset.stats)
     
     num_feat = len(ds_train[0][0])
     print(f'Num features {num_feat}')
@@ -420,8 +444,8 @@ def train_fine_tune_wh(cfg, load_stats=False, params_path=None, bs=256, **kwargs
     # Train using weather@home, then fine tune on obs.
     print('Training w@h -----')
     
-    logger = None#wandb.log
-    param_wh = train_wh(cfg, cfg.location, load_stats=False,  bs=bs, num_epochs=20, log=logger, **kwargs)
+    #wandb.log
+    param_wh = train_wh(cfg, cfg.location, load_stats=False,  bs=bs, num_epochs=20, **kwargs)
     
     # Fine tune with obs
     print('Fine tuning with obs')
@@ -432,14 +456,16 @@ def train_fine_tune_wh(cfg, load_stats=False, params_path=None, bs=256, **kwargs
     else:
         kwargs['opt_kwargs'] = {'max_lr' : 1e-4} 
     
-    train_obs(cfg, load_stats=True,  bs=bs, log=logger, num_epochs=5, param_init=param_wh, **kwargs)
+    train_obs(cfg, load_stats=True,  bs=bs, num_epochs=5, param_init=param_wh, **kwargs)
     
     #wandb.finish()
 
 def run(location, cfg_name, model_version):
     cfg = get_config(cfg_name, version=model_version, location=location)
+    wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg})
+
     train_func = globals()[cfg.train_func]
-    train_func(cfg, **cfg.train_kwargs)
+    train_func(cfg, log=wandb.log, **cfg.train_kwargs)
 
 if __name__ == '__main__':
     fire.Fire(run)
