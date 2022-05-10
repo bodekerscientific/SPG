@@ -1,0 +1,7 @@
+model:
+    MixtureModel:
+        - Gamma
+        - Gamma
+        - GenPareto
+        
+base_spg: BernoulliSPG

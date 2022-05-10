@@ -1,0 +1,5 @@
+model:
+  Gamma
+
+        
+base_spg: BernoulliSPG
