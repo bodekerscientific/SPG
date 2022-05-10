@@ -80,7 +80,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
     
     return output_path
 
-def get_opt(params, max_lr=1e-3, min_lr=1e-6, max_steps=5000, spin_up_steps=300, wd=1e-7, lookahead=5):
+def get_opt(params, max_lr=1e-3, min_lr=1e-6, max_steps=5000, spin_up_steps=300, wd=0.01, lookahead=5):
     sched = optax.warmup_cosine_decay_schedule(min_lr, max_lr, spin_up_steps, max_steps, min_lr)
     opt = optax.adamw(sched, weight_decay=wd)
     opt = optax.apply_if_finite(opt, 20)
@@ -106,10 +106,8 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
     rng = random.PRNGKey(42**2)
     x = jnp.ones(( num_feat,), dtype=jnp.float32)
 
-    params_init = model.init(random.PRNGKey(0), x, rng, train=False)
-
     if params is None:
-        params = params_init
+        params = model.init(random.PRNGKey(0), x, rng, train=False)
 
     opt, opt_state, params = get_opt(params, **opt_kwargs)
 
@@ -123,7 +121,7 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
         return jax.vmap(nll)(x_b, y_b).mean()
 
     @jax.jit
-    def tr_loss_func(params, x_b, y_b, rng):
+    def tr_nll(params, x_b, y_b, rng):
         # Negative Log Likelihood loss
         def loss(x, y, rng_drop):
             return model.apply(params, x, y, True, method=model.log_prob, rngs = {'dropout': rng_drop})#*(x[1]+4)**2
@@ -137,7 +135,7 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
     
     @jax.jit
     def tr_lin_loss_func(params, x_b, y_b, rng):
-        nll = tr_loss_func(params, x_b, y_b, rng)
+        loss = tr_nll(params, x_b, y_b, rng)
         
         def loss_lin(x, rng):    
             t_p_1, t_p_2, t_p_3 = random.uniform(rng, (3,))
@@ -154,20 +152,24 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
             def loss():
                 return jnp.abs((x_pred_2 - x_pred_1)/(t_p_2 - t_p_1)  - (x_pred_3 - x_pred_1)/(t_p_3 - t_p_1))
             
-            return jax.lax.cond((x_pred_1 > 0) & (x_pred_2 > 0) & (x_pred_3 > 0), loss, lambda :  0.0)
+            cond = (x_pred_1 > 0) & (x_pred_2 > 0) & (x_pred_3 > 0) & (x_pred_1 < 200) & (x_pred_2 < 200) & (x_pred_3 < 200)
             
-        rngs = random.split(rng, num=len(x_b))
+            return jax.lax.cond(cond, loss, lambda :  0.0)
         
-        return nll + jax.vmap(loss_lin)(x_b, rngs).mean()
+        if use_lin_loss:
+            rngs = random.split(rng, num=len(x_b))
+            loss +=  5*jax.vmap(loss_lin)(x_b, rngs).mean()
+        
+        return loss
+        
     
     @jax.jit
     def step(x, y, params, opt_state, rng):
-        loss, grads = jax.value_and_grad(tr_loss_func)(params.fast, x, y, rng)
+        loss, grads = jax.value_and_grad(tr_lin_loss_func)(params.fast, x, y, rng)
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
 
         return loss, params, opt_state, random.split(rng)[1]
-
     
     @jax.jit
     def val_step(x_b, y_b, params, rng):
@@ -340,30 +342,35 @@ def get_config(name, version, location, ens=None, output_path=None):
 
     return cfg
 
-def train_wh(cfg, location, bs=256, load_stats=False, data_obs=None, **kwargs):
+def train_wh(cfg, location, bs=256, load_stats=False, data_obs=None, freq='D', **kwargs):
     print('Loading weather@home')
+    model, model_dict = get_model(cfg.version)
     
-    wh_ens = data_utils.load_wh(location=location, num_ens=500, data_obs=data_obs)
-    
+    loader_args = model_dict['loader_args'] if 'loader_args' in model_dict else {}
+
+    # Apply bias correction of 1.75
+    wh_ens = data_utils.load_wh(location=location, num_ens=500, mult_factor=1.75)
     print(f'Loaded {len(wh_ens)} ens')
 
     ds_train, ds_valid = data_loader.get_datasets(wh_ens, num_valid=50, is_wh=True, ds_cls=data_loader.PrecipitationDatasetWH,
-                                                  stats_path=cfg.stats_path, load_stats=load_stats)
+                                                  stats_path=cfg.stats_path, load_stats=load_stats, **loader_args)
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
     num_feat = len(ds_train[0][0])
     print(f'Num features {num_feat}')
 
-    train(cfg=cfg, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
+    return train(model, cfg=cfg, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
 
 
-def train_obs(cfg, load_stats=False, params_path=None, freq='H', bs=256, param_init=None, **kwargs):
+def train_obs(cfg, model=None, load_stats=False, params_path=None, freq='H', bs=256, param_init=None, **kwargs):
     model, model_dict = get_model(cfg.version)
 
     data = data_utils.load_nc(cfg.input_file)
+    
+    loader_args = model_dict['loader_args'] if 'loader_args' in model_dict else {}
 
     ds_train, ds_valid = data_loader.get_datasets(data, num_valid=cfg.num_valid, load_stats=load_stats, stats_path=cfg.stats_path, 
-                                                  freq=freq, ds_cls=data_loader.PrecipitationDataset, **model_dict['loader_args'])
+                                                  freq=freq, ds_cls=data_loader.PrecipitationDataset, **loader_args)
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
     
@@ -375,7 +382,7 @@ def train_obs(cfg, load_stats=False, params_path=None, freq='H', bs=256, param_i
     else:
         params = param_init
 
-    train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
+    return train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
 
 
 def train_multiscale(model, cfg, load_stats=False, params_path=None, bs=256, **kwargs):
@@ -395,50 +402,39 @@ def train_multiscale(model, cfg, load_stats=False, params_path=None, bs=256, **k
     
     train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
 
-def wh_fine_tune_obs(loc, version, load_stats=False, bs=256, wh_epochs=20, train_split=True,
+def train_splitter(loc, version, load_stats=False, bs=256, wh_epochs=20, train_split=True,
                      output_path='/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/split/'):
     # Train with w@h first then fine tune using obs.
+    print('Training hourly splitter -----')
+    version_split = version + '_split'
+    cfg_split = get_config('base_daily', version=version_split, location=loc, output_path=output_path)
+    model, model_dict = get_model(version_split)
+
+    wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_split, 'model_dict' : model})
+    logger = wandb.log
     
-    # Train the hourly splitter
-    if train_split:
-        print('Training hourly splitter -----')
-        version_split = version + '_split'
-        cfg_split = get_config('base_daily', version=version_split, location=loc, output_path=output_path)
-        model, model_dict = get_model(version_split)
+    train_multiscale(model, cfg_split, load_stats=load_stats,  bs=bs, log=logger, num_epochs=20)
+    wandb.finish()
 
-        wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_split, 'model_dict' : model})
-        logger = wandb.log
-        
-        train_multiscale(model, cfg_split, load_stats=load_stats,  bs=bs, log=logger, num_epochs=20)
-        wandb.finish()
+def train_fine_tune_wh(cfg, load_stats=False, params_path=None, bs=256, **kwargs):
+    # Train using weather@home, then fine tune on obs.
+    print('Training w@h -----')
+    
+    logger = None#wandb.log
+    param_wh = train_wh(cfg, cfg.location, load_stats=False,  bs=bs, num_epochs=20, log=logger, **kwargs)
+    
+    # Fine tune with obs
+    print('Fine tuning with obs')
+    
+    # Reduce the learning rate for fine tuning
+    if 'opt_kwargs' in kwargs:
+        kwargs['opt_kwargs']['max_lr'] = 1e-4
     else:
-        #Load the 32H stats config
-        version_32H = version + '_32H'
-        cfg_32H = get_config('base_32H', version=version_32H, location=loc, output_path=output_path)
-
-        # Train wh
-        print('Training w@h -----')
-        version_wh = version + '_wh'
-        cfg_wh = get_config('base_32H', version=version_wh, location=loc, output_path=output_path)
-        model, model_dict = get_model(version + '_daily')
-
-        # Overwrite the stats path so we can resuse when we train the 32H version
-        cfg_wh.stats_path = cfg_32H.stats_path
-
-        wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_wh, 'model_dict' : model})
-        logger = wandb.log
-
-        param_wh = train_wh(cfg_wh, loc.split('_')[0], model=model, load_stats=False,  bs=bs, num_epochs=wh_epochs,
-                            log=logger)
-        wandb.finish()
-
-        # Fine tune with obs
-        print('Fine tuning with obs')
-        wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg_32H, 'model_dict' : model})
-        logger = wandb.log
-        
-        train_obs(model, cfg_32H, load_stats=True,  bs=bs, log=logger, num_epochs=20, param_init=param_wh)
-        wandb.finish()
+        kwargs['opt_kwargs'] = {'max_lr' : 1e-4} 
+    
+    train_obs(cfg, load_stats=True,  bs=bs, log=logger, num_epochs=5, param_init=param_wh, **kwargs)
+    
+    #wandb.finish()
 
 def run(location, cfg_name, model_version):
     cfg = get_config(cfg_name, version=model_version, location=location)

@@ -54,7 +54,7 @@ class MLP(nn.Module):
         for n, feat in enumerate(self.features[:-1]):
             x_n = FeedForward(features=feat)(x, deterministic=not train)
             
-            # Skip connection
+            # for skip connection
             if n == 0:
                 x = nn.Dense(feat)(x)
 
