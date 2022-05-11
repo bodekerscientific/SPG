@@ -82,7 +82,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
     
     return output_path
 
-def get_opt(params, max_lr=1e-3, min_lr=1e-8, max_steps=50000, spin_up_steps=300, wd=0.01, lookahead=5):
+def get_opt(params, max_lr=1e-3, min_lr=1e-6, max_steps=50000, spin_up_steps=300, wd=0.01, lookahead=5):
     sched = optax.warmup_cosine_decay_schedule(min_lr, max_lr, spin_up_steps, max_steps, min_lr)
     opt = optax.adamw(sched, weight_decay=wd)
     opt = optax.apply_if_finite(opt, 20)
@@ -104,7 +104,7 @@ def set_tprime(x, stats, t_prime):
     
 
 def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=None, num_epochs=40, opt_kwargs={},
-          make_tp_plots=False, use_lin_loss=True):
+          make_tp_plots=False, use_lin_loss=True, params_old=None):
     
     rng = random.PRNGKey(42**2)
     x = jnp.ones(( num_feat,), dtype=jnp.float32)
@@ -134,8 +134,6 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
         log_p = jax.vmap(loss)(x_b, y_b, rngs)
         return (-log_p).mean()
     
-    
-    
     @jax.jit
     def tr_lin_loss_func(params, x_b, y_b, rng):
         loss = tr_nll(params, x_b, y_b, rng)
@@ -156,18 +154,43 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
                 r1 = jnp.log((eps + x_pred_2)/(x_pred_1 + eps))/(t_p_2 - t_p_1)
                 r2 = jnp.log((eps + x_pred_3)/(x_pred_1 + eps))/(t_p_3 - t_p_1)                          
                 return jnp.abs(r1 - r2)
-             
-                #return jnp.abs((x_pred_2 - x_pred_1)/(t_p_2 - t_p_1)  - (x_pred_3 - x_pred_1)/(t_p_3 - t_p_1))
-            
+                         
             # For numerical stability at the start of training
             cond = (x_pred_1 < 200) & (x_pred_2 < 200) & (x_pred_3 < 200)
             
             return jax.lax.cond(cond, loss, lambda :  0.0)
         
+        def loss_consist(x, rng, eps=1e-5):
+            # Keeps consistency between older version of weights
+            t_p_1, t_p_2, p_dist = random.uniform(rng, (3,))
+            
+            # Generate some random samples for t_prime
+            t_p_1 *= 1.5
+            t_p_2 = t_p_2*5 + 0.25 + t_p_1
+            
+            pr_new_1 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_1), p_dist, False, method=model.ppf_wet, rngs = {'dropout': rng})
+            pr_new_2 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_2), p_dist, False, method=model.ppf_wet, rngs = {'dropout': rng}) 
+            
+            pr_old_1 = model.apply(params_old, set_tprime(x, valid_loader.dataset.stats, t_p_1), p_dist, False, method=model.ppf_wet, rngs = {'dropout': rng})
+            pr_old_2 = model.apply(params_old, set_tprime(x, valid_loader.dataset.stats, t_p_2), p_dist, False, method=model.ppf_wet, rngs = {'dropout': rng})
+            
+            def loss(): 
+                r1 = jnp.log((eps + pr_new_2)/(pr_new_1 + eps))/(t_p_2 - t_p_1)
+                r2 = jnp.log((eps + pr_old_2)/(pr_old_1 + eps))/(t_p_2 - t_p_1)                   
+                return jnp.abs(r1 - r2)
+            
+            # For numerical stability at the start of training
+            cond = (pr_new_1 < 200) & (pr_new_2 < 200) & (pr_old_1 < 200) & (pr_old_2 < 200)
+            
+            return jax.lax.cond(cond, loss, lambda :  0.0)
+        
         if use_lin_loss:
             rngs = random.split(rng, num=len(x_b))
-            loss += jax.vmap(loss_lin)(x_b, rngs).mean() 
-            
+            if params_old is not None:
+                loss += jax.vmap(loss_consist)(x_b, rngs).mean() 
+            else:
+                loss += jax.vmap(loss_lin)(x_b, rngs).mean()
+                
         return loss
         
     
@@ -450,16 +473,9 @@ def train_fine_tune_wh(cfg, load_stats=False, params_path=None, bs=256, **kwargs
     # Fine tune with obs
     print('Fine tuning with obs')
     
-    # Reduce the learning rate for fine tuning
-    if 'opt_kwargs' in kwargs:
-        kwargs['opt_kwargs']['max_lr'] = 1e-4
-    else:
-        kwargs['opt_kwargs'] = {'max_lr' : 1e-4} 
+    params_old = deepcopy(param_wh)
+    train_obs(cfg, load_stats=True,  bs=bs, num_epochs=40, param_init=param_wh, params_old=params_old, **kwargs)
     
-    train_obs(cfg, load_stats=True,  bs=bs, num_epochs=5, param_init=param_wh, **kwargs)
-    
-    #wandb.finish()
-
 def run(location, cfg_name, model_version):
     cfg = get_config(cfg_name, version=model_version, location=location)
     wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg})
