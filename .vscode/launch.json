@@ -5,6 +5,19 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python: Module",
+            "type": "python",
+            "request": "launch",
+            "module": "spg.run",
+            "justMyCode": true,
+            "args": [
+                "dunedin_combined",
+                "v14",
+                "4",
+                "200"
+            ]
+        },
+        {
             "name": "Python: Current File",
             "type": "python",
             "request": "launch",
@@ -12,10 +25,9 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": [
-                "dunedin_combined",
-                "v9",
-                "2",
-                "8"
+                "christchurch",
+                "base_wh", 
+                "v8",
             ]
         }
     ]
