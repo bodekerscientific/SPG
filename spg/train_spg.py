@@ -7,6 +7,7 @@
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
 """
 from dataclasses import replace
+from functools import partial
 import fire
 
 import os
@@ -36,12 +37,16 @@ from spg import data_loader, data_utils,  spg_dist
 from bslibs.plot.qqplot import qqplot
 from tqdm import tqdm
 
+from jax.config import config
+# config.update("jax_debug_nans", True)
+
 # from jax.config import config
 # config.update('jax_disable_jit', True)
 
+jax.config.update("jax_enable_x64", True)
 
 #Global flag to set a specific platform, must be used at startup.
-#jax.config.update('jax_platform_name', 'cpu')
+jax.config.update('jax_platform_name', 'cpu')
 
 def make_qq(preds: list, targets: list, averages=[1, 8, 24], title=None):
     # Ensure output folder exists
@@ -104,7 +109,7 @@ def set_tprime(x, stats, t_prime):
     
 
 def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=None, num_epochs=40, opt_kwargs={},
-          make_tp_plots=False, use_lin_loss=True, params_old=None):
+          make_tp_plots=False, use_lin_loss=False, params_old=None, start_epoch=1):
     
     rng = random.PRNGKey(42**2)
     x = jnp.ones(( num_feat,), dtype=jnp.float32)
@@ -138,27 +143,28 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
     def tr_lin_loss_func(params, x_b, y_b, rng):
         loss = tr_nll(params, x_b, y_b, rng)
         
-        def loss_lin(x, rng, eps=1e-5):    
+        def loss_lin(params, x, rng, eps=1e-5):    
             t_p_1, t_p_2, t_p_3, p_dist = random.uniform(rng, (4,))
             
             # Generate some random samples for t_prime
             t_p_1 *= 1.5 
             t_p_2 = t_p_2*2 + 0.25 + t_p_1
-            t_p_3 = 2*t_p_3 + t_p_2 + 0.25
+            t_p_3 = 7*t_p_3
             
-            x_pred_1 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_1), p_dist, False, method=model.ppf_wet, rngs = {'dropout': rng})
-            x_pred_2 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_2), p_dist, False, method=model.ppf_wet, rngs = {'dropout': rng}) 
-            x_pred_3 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_3), p_dist, False, method=model.ppf_wet, rngs = {'dropout': rng})
+            x_pred_1 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_1), p_dist, True, method=model.ppf_wet, rngs = {'dropout': rng})
+            x_pred_2 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_2), p_dist, True, method=model.ppf_wet, rngs = {'dropout': rng}) 
+            x_pred_3 = model.apply(params, set_tprime(x, valid_loader.dataset.stats, t_p_3), p_dist, True, method=model.ppf_wet, rngs = {'dropout': rng})
             
-            def loss(): 
-                r1 = jnp.log((eps + x_pred_2)/(x_pred_1 + eps))/(t_p_2 - t_p_1)
-                r2 = jnp.log((eps + x_pred_3)/(x_pred_1 + eps))/(t_p_3 - t_p_1)                          
-                return jnp.abs(r1 - r2)
+            r1 = jnp.log((eps + x_pred_2)/(x_pred_1 + eps))/(t_p_2 - t_p_1)
+            pred_3_expected = x_pred_1*jnp.exp(r1*(t_p_3 - t_p_1))
+            #r2 = jnp.log((eps + x_pred_3)/(x_pred_1 + eps))/(t_p_3 - t_p_1)                          
+            loss = jnp.abs(x_pred_3 - pred_3_expected)
+            return loss
                          
-            # For numerical stability at the start of training
-            cond = (x_pred_1 < 200) & (x_pred_2 < 200) & (x_pred_3 < 200)
+            # # For numerical stability at the start of training
+            # cond = (x_pred_1 < 200) & (x_pred_2 < 200) & (x_pred_3 < 200)
             
-            return jax.lax.cond(cond, loss, lambda :  0.0)
+            # return jax.lax.cond(cond, lambda *args :  loss, lambda *args :  0.0)
         
         def loss_consist(x, rng, eps=1e-5):
             # Keeps consistency between older version of weights
@@ -187,9 +193,9 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
         if use_lin_loss:
             rngs = random.split(rng, num=len(x_b))
             if params_old is not None:
-                loss += jax.vmap(loss_consist)(x_b, rngs).mean() 
+                loss += 1*jax.vmap(partial(loss_consist, params))(x_b, rngs).mean() 
             else:
-                loss += jax.vmap(loss_lin)(x_b, rngs).mean()
+                loss += 1*jax.vmap(partial(loss_lin, params))(x_b, rngs).mean()
                 
         return loss
         
@@ -237,7 +243,7 @@ def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=N
         return preds, targets, val_loss, rng
     
     best_loss = jnp.inf
-    for epoch in range(1, num_epochs+1):
+    for epoch in range(start_epoch, num_epochs + start_epoch):
         tr_loss = []
         tr_it = tqdm(tr_loader)
         for batch in tr_it:
@@ -343,10 +349,9 @@ def get_model(version=None, path=None, stats=None):
     model = base_cls(dist)
     
     if stats is not None:
-        model.min_pr /= stats['y']['std']
-        print(model.min_pr)
+        model.min_pr /= float(stats['y']['std'])
         
-    return base_cls(dist), model_dict
+    return model, model_dict
 
 
 def get_config(name, version, location, ens=None, output_path=None):
@@ -467,14 +472,18 @@ def train_fine_tune_wh(cfg, load_stats=False, params_path=None, bs=256, **kwargs
     # Train using weather@home, then fine tune on obs.
     print('Training w@h -----')
     
-    #wandb.log
+    #wandb.logb
     param_wh = train_wh(cfg, cfg.location, load_stats=False,  bs=bs, num_epochs=20, **kwargs)
     
     # Fine tune with obs
     print('Fine tuning with obs')
     
-    params_old = deepcopy(param_wh)
-    train_obs(cfg, load_stats=True,  bs=bs, num_epochs=40, param_init=param_wh, params_old=params_old, **kwargs)
+    if 'opt_kwargs' not in kwargs:
+        kwargs['opt_kwargs'] = {}    
+    kwargs['opt_kwargs']['max_lr'] = 1e-4
+    
+    #params_old = deepcopy(param_wh)
+    train_obs(cfg, load_stats=True,  bs=bs, num_epochs=25, start_epoch=21, param_init=param_wh, **kwargs)
     
 def run(location, cfg_name, model_version):
     cfg = get_config(cfg_name, version=model_version, location=location)
@@ -485,6 +494,7 @@ def run(location, cfg_name, model_version):
 
 if __name__ == '__main__':
     fire.Fire(run)
+    
     # if len(sys.argv) == 3:
     #     location = sys.argv[1]
     #     version = sys.argv[2]
