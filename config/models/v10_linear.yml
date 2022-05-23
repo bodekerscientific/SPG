@@ -1,0 +1,11 @@
+model:
+    MixtureModel:
+        - Gamma
+        - Gamma
+        - GenPareto
+        - GenPareto
+        
+base_spg: BernoulliSPG
+
+loader_args :
+    inc_tprime : FALSE

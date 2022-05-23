@@ -1,12 +1,12 @@
 output_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/
 input_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hourly/
-ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly/
+ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly_paper/
 
 train_func: train_obs
 train_kwargs : 
   freq : H
 
-num_ens : 20
+num_ens : 10
 num_valid : 20000
 
 max_values :
@@ -20,14 +20,14 @@ max_values :
 
 scenarios :
   - rcp85
-  # - ssp585
-  # - rcp26
-  # - rcp45
-  # - rcp60
-  # - ssp119
-  # - ssp126
-  # - ssp245
-  # - ssp370
-  # - ssp434
-  # - ssp460
+  - ssp585
+  - rcp26
+  - rcp45
+  - rcp60
+  - ssp119
+  - ssp126
+  - ssp245
+  - ssp370
+  - ssp434
+  - ssp460
   

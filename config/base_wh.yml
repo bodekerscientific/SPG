@@ -1,6 +1,6 @@
 output_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/daily_wh/
 input_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data/
-ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_daily_wh/
+ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_daily_wh_paper/
 
 num_ens : 10
 num_valid : 1000
