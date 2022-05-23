@@ -121,9 +121,7 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, spin_up
     cond_samples = 8 if freq == 'D' else 8*24
     
     model, model_dict = train_spg.get_model(cfg.version, stats=stats)
-
-    
-    feat_func =  data_loader.generate_features if freq == 'H' else data_loader.generate_features_daily
+    feat_func = data_loader.generate_features if freq == 'H' else data_loader.generate_features_daily
 
     if 'loader_args' in model_dict:
          feat_func = partial(feat_func, **model_dict['loader_args'])
@@ -173,7 +171,6 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, spin_up
 
     # Remove the real data and spin up period from the output
     output = output.iloc[spin_up_steps:]
-
     return output
     
 
@@ -274,7 +271,7 @@ def run_hourly():
     param_path = get_params_path(cfg, param_epoch)
 
     preds = run_spg_mlp(data, param_path, stats=stats, cfg=cfg, max_pr=max_pr, **cfg.train_kwargs)
-    data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'))
+    data_utils.save_nc_tprime(preds, cfg.ens_path / (location + '.nc'), sce='ssp245')
 
     run_pool(cfg=cfg, data=data, stats=stats, params_path=param_path, max_pr=max_pr, **cfg.train_kwargs)
 

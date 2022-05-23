@@ -67,22 +67,25 @@ class MLP(nn.Module):
     
 class BernoulliSPG(nn.Module):
     dist: Callable
-    mlp_hidden: Sequence[int] = (512,)*4
+    mlp_hidden: Sequence[int] = (256,)*3
     min_pr: int = 0.1
 
     def setup(self, ):
-        # Transformer(num_out=2+self.dist.num_params)
+        # NN
         self.mlp = MLP(self.mlp_hidden+(2+self.dist.num_params,))
-
+        
+        # Linear model
+        #self.mlp = nn.Dense(2+self.dist.num_params)
+        
     @nn.compact
     def __call__(self, x, rng, train=False):
-        return self.mlp(x, train=train)
+        return self.mlp(x)
 
     def _split_params(self, params):
         return params[0:2], params[2:]
 
     def sample(self, x, rng, train=False):
-        dist_params = self.mlp(x, train=train)
+        dist_params = self.mlp(x)
 
         logit_params, dist_params = self._split_params(dist_params)
         p_d, _ = nn.softmax(logit_params)
@@ -97,13 +100,13 @@ class BernoulliSPG(nn.Module):
         )
         
     def ppf_wet(self, x, p, train=True):
-        dist_params = self.mlp(x, train=train)
+        dist_params = self.mlp(x)
         _, dist_params = self._split_params(dist_params)
 
         return self.dist.ppf(dist_params, p)  + self.min_pr
     
     def log_prob(self, x, y, train=True):
-        dist_params = self.mlp(x, train=train)
+        dist_params = self.mlp(x)
 
         logit_params, dist_params = self._split_params(dist_params)
         p_d, p_r = nn.log_softmax(logit_params)
@@ -143,14 +146,11 @@ class Dist():
         return self.dist(*params).sample(seed=rng)
 
 
-Gamma = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(
-    p),  tfp_dist=tfd.Gamma)
+Gamma = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(p),  tfp_dist=tfd.Gamma)
 
-Weibull = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(
-    p), tfp_dist=tfd.Weibull)
+Weibull = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(p), tfp_dist=tfd.Weibull)
 
-Beta = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(p), 
-               tfp_dist=tfd.Beta)
+Beta = partial(Dist, num_params=2, param_func=lambda p: jax_utils.pos_only(p), tfp_dist=tfd.Beta)
 
 def gen_parto_func(params):
     return jnp.asarray([0.0, jax_utils.pos_only(params[0]), jax_utils.pos_only(params[1])])
@@ -167,7 +167,7 @@ Dirichlet = partial(Dist, num_params=24, param_func=lambda p: jax_utils.pos_only
 
 class SPGSingleDist(nn.Module):
     dist: Callable
-    mlp_hidden: Sequence[int] = (256,)*4
+    mlp_hidden: Sequence[int] = (256,)*3
     min_pr: int = 0.1001
 
     def setup(self, ):
