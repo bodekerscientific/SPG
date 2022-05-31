@@ -9,7 +9,7 @@ train_func: train_obs
 train_kwargs : 
   freq : D
   opt_kwargs :
-    max_steps : 50000
+    max_steps : 5000
     
 
 max_values :
@@ -17,7 +17,7 @@ max_values :
   dunedin_combined : 220
   dunedin_aero : 220  
   tarahills : 200
-  tauranga : 400
+  tauranga : 300
   christchurch : 180
   auckland : 250
   fake-autocorr : 10000

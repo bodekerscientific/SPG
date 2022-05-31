@@ -5,16 +5,28 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Module",
+            "name": "run spg",
             "type": "python",
             "request": "launch",
             "module": "spg.run",
             "justMyCode": true,
             "args": [
-                "dunedin_combined",
-                "v14",
-                "4",
-                "200"
+                "auckland",
+                "v6",
+                "12",
+                "base_daily"
+            ]
+        },
+        {
+            "name": "train spg",
+            "type": "python",
+            "request": "launch",
+            "module": "spg.train_spg",
+            "justMyCode": true,
+            "args": [
+                "fake_ns_50",
+                "base_daily",
+                "gamma_lin",
             ]
         },
         {
