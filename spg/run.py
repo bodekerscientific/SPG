@@ -10,7 +10,7 @@ from collections import defaultdict
 import os
 
 #os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = 'false'
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
+# os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 import sys
 from datetime import datetime
@@ -35,6 +35,11 @@ from tqdm import tqdm
 import jax
 
 N_CPU = 24
+
+# jax.config.update("jax_enable_x64", True)
+
+#Global flag to set a specific platform, must be used at startup.
+# jax.config.update('jax_platform_name', 'cpu')
 
 def cond_func(values, last_cond):
     rain = values[-1]

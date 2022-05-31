@@ -22,9 +22,9 @@ def prob_bin(probs, thresh=0.5):
 def linear_expansion(params, cond, key='tprime'):
     return params['offset'][..., None] + params['coefs'][..., None]*cond[key][None]
 
-def pos_only(x):
+def pos_only(x, eps=1e-4):
     """ Ensures the values of x always positive"""
-    return nn.elu(x) + 1.0
+    return nn.elu(x) + 1.0 + eps
 
 def apply_func_idx(arr, idx, *args, func=pos_only, **kwargs):
     return arr.at[idx].set(func(arr[idx], *args, **kwargs))
