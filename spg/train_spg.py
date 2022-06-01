@@ -43,10 +43,10 @@ from jax.config import config
 # from jax.config import config
 # config.update('jax_disable_jit', True)
 
-#jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_enable_x64", True)
 
 #Global flag to set a specific platform, must be used at startup.
-#jax.config.update('jax_platform_name', 'cpu')
+jax.config.update('jax_platform_name', 'cpu')
 
 def make_qq(preds: list, targets: list, averages=[1, 8, 24], title=None):
     # Ensure output folder exists
@@ -90,13 +90,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
 def get_opt(params, max_lr=1e-3, min_lr=1e-7, max_steps=5000, spin_up_steps=300, wd=0.01, lookahead=5):
     sched = optax.warmup_cosine_decay_schedule(min_lr, max_lr, spin_up_steps, max_steps, min_lr)
     
-    opt = optax.chain(
-            optax.clip_by_global_norm(.5),
-            optax.scale_by_adam(),
-            optax.add_decayed_weights(wd,),
-            optax.scale_by_schedule(sched),
-            optax.scale(-1.0)
-    )
+    opt = optax.adamw(sched, weight_decay=wd)
     
     opt = optax.apply_if_finite(opt, 20)
     params =  optax.LookaheadParams(params, deepcopy(params))
@@ -445,7 +439,7 @@ def train_obs(cfg, model=None, load_stats=False, params_path=None, freq='H', bs=
     return train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
 
 
-def train_multiscale(model, cfg, load_stats=False, params_path=None, bs=2048, **kwargs):
+def train_multiscale(model, cfg, load_stats=False, params_path=None, bs=256, **kwargs):
     data = data_utils.load_nc(cfg.input_file)
 
     ds_train, ds_valid = data_loader.get_datasets(data, num_valid=365*3*24, load_stats=load_stats, 

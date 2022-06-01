@@ -13,7 +13,7 @@ from bslibs.regression.datetime_utils import datetimes_to_dec_year
 def dt_360_to_dec_year(dts):
     return np.array([dt.year + ((dt.month-1)*30 + dt.day)/360.0 for dt in dts])
 
-def generate_features_daily(pr : pd.Series, average_days=[1, 2, 4, 8], inc_doy=True, inc_tprime=True, rd_thresh=0.1, sce='ssp245', is_wh=False):
+def generate_features_daily(pr : pd.Series, average_days=[1, 2, 4, 8], inc_doy=True, inc_tprime=True, rd_thresh=1.0, sce='ssp245', is_wh=False):
     features = []
     # Select y, and remove the last day as there would be no label        
     

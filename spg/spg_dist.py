@@ -68,7 +68,7 @@ class MLP(nn.Module):
 class BernoulliSPG(nn.Module):
     dist: Callable
     mlp_hidden: Sequence[int] = (256,)*3
-    min_pr: int = 0.1
+    min_pr: int = 1.0
 
     def setup(self, ):
         # NN
