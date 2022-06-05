@@ -111,9 +111,9 @@ def set_tprime(x, stats, t_prime):
     
 
 def train(model, num_feat, tr_loader, valid_loader, log=None, cfg=None, params=None, num_epochs=40, opt_kwargs={},
-          make_tp_plots=False, use_lin_loss=False, params_old=None, start_epoch=1):
+          make_tp_plots=False, use_lin_loss=False, params_old=None, start_epoch=1, seed=42):
     
-    rng = random.PRNGKey(42**2)
+    rng = random.PRNGKey(seed)
     x = jnp.ones(( num_feat,), dtype=jnp.float32)
     
     if params is None:
@@ -414,7 +414,7 @@ def train_wh(cfg, location, bs=256, load_stats=False, data_obs=None, freq='D', *
     return train(model, cfg=cfg, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, **kwargs)
 
 
-def train_obs(cfg, model=None, load_stats=False, params_path=None, freq='H', bs=256, param_init=None, **kwargs):
+def train_obs(cfg, model=None, load_stats=False, params_path=None, freq='H', bs=256, param_init=None , seed=42, **kwargs):
     _, model_dict = get_model(cfg.version)
 
     data = data_utils.load_nc(cfg.input_file)
@@ -424,7 +424,7 @@ def train_obs(cfg, model=None, load_stats=False, params_path=None, freq='H', bs=
     ds_train, ds_valid = data_loader.get_datasets(data, num_valid=cfg.num_valid, load_stats=load_stats, stats_path=cfg.stats_path, 
                                                   freq=freq, ds_cls=data_loader.PrecipitationDataset, **loader_args)
 
-    tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
+    tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs, seed=seed)
     
     model, model_dict = get_model(cfg.version, stats=val_loader.dataset.stats)
     
@@ -487,12 +487,12 @@ def train_fine_tune_wh(cfg, load_stats=False, params_path=None, bs=256, **kwargs
     #params_old = deepcopy(param_wh)
     train_obs(cfg, load_stats=True,  bs=bs, num_epochs=25, start_epoch=21, param_init=param_wh, **kwargs)
     
-def run(location, cfg_name, model_version):
+def run(location, cfg_name, model_version, seed=42):
     cfg = get_config(cfg_name, version=model_version, location=location)
     wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg})
 
     train_func = globals()[cfg.train_func]
-    train_func(cfg, log=wandb.log, **cfg.train_kwargs)
+    train_func(cfg, log=wandb.log, **cfg.train_kwargs, seed=seed)
 
 if __name__ == '__main__':
     fire.Fire(run)

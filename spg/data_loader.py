@@ -6,6 +6,8 @@ import jax.numpy as jnp
 import jax
 import json
 from functools import partial
+import torch
+
 
 from spg import data_utils
 from bslibs.regression.datetime_utils import datetimes_to_dec_year
@@ -342,7 +344,9 @@ def get_datasets(data, num_valid=10000, is_wh=False, stats_path = None,
 
     return train_ds, valid_ds
 
-def get_data_loaders(train_ds, valid_ds, bs=256, collate_fn=jax_batch, **kwargs):
+def get_data_loaders(train_ds, valid_ds, bs=256, collate_fn=jax_batch,  seed=42, **kwargs):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     train_dataloader = DataLoader(train_ds, batch_size=bs, shuffle=True, collate_fn=collate_fn, **kwargs)
     valid_dataloader = DataLoader(valid_ds, batch_size=bs, shuffle=False, collate_fn=collate_fn, **kwargs)
 
