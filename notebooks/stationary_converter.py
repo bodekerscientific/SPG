@@ -9,9 +9,15 @@ class StationaryConverter:
     def __init__(self):
         pass
 
+    def set_stationary_spg_output(self, dataset):
+        assert "time" in dataset.keys()
+        assert "precipitation" in dataset.keys()
+        self.hourly_ds = dataset
+    
     def load_stationary_spg_output(self, path):
         print(f"Loading hourly stationary-SPG output from {path}")
-        self.hourly_ds = xr.open_dataset(path)
+        dataset = xr.open_dataset(path)
+        self.set_stationary_spg_output(dataset)
 
     def resample_to_daily(self):
         print("Resampling hourly data to daily")
@@ -20,7 +26,9 @@ class StationaryConverter:
     def calc_delta_t_prime(self, date_to_t_tprime_converter, t_prime_training):
         print("Calculating delta t_prime")
         convert_date_to_t_tprime = date_to_t_tprime_converter
-        delta_t_primes = convert_date_to_t_tprime(self.daily_ds["time"]) - t_prime_training
+        t_primes = convert_date_to_t_tprime(self.daily_ds["time"])
+        self.daily_ds = self.daily_ds.assign(t_prime=("time",t_primes))
+        delta_t_primes = self.daily_ds["t_prime"].values - t_prime_training
         self.daily_ds = self.daily_ds.assign(delta_t_prime=("time",delta_t_primes))
 
     def convert_precipitation_to_quantile(self):
@@ -50,7 +58,10 @@ class StationaryConverter:
         self.daily_ds = self.daily_ds.assign(multiplier=("time", multipliers))
 
     def calc_daily_non_stationary_precipitation(self):
-        non_stationary_precipitation = self.daily_ds["precipitation"].to_numpy() * self.daily_ds["multiplier"].to_numpy()
+        non_stationary_precipitation = (
+            self.daily_ds["precipitation"].to_numpy() 
+            * self.daily_ds["multiplier"].to_numpy()
+        )
         self.daily_ds = self.daily_ds.assign(non_stationary_precipitation=("time",non_stationary_precipitation))
 
     def save_daily(self, filepath):
