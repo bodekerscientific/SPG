@@ -2,8 +2,6 @@ import numpy as np
 import xarray as xr
 from scipy.interpolate import interp1d
 
-#class WeatherAtHome:
-
 
 class StationaryConverter:
     def __init__(self):
@@ -12,6 +10,7 @@ class StationaryConverter:
     def set_stationary_spg_output(self, dataset):
         assert "time" in dataset.keys()
         assert "precipitation" in dataset.keys()
+        dataset = dataset.drop("tprime") # we don't use this
         self.hourly_ds = dataset
     
     def load_stationary_spg_output(self, path):
@@ -54,7 +53,10 @@ class StationaryConverter:
         self.daily_ds = self.daily_ds.assign(rate=("time",rates))
 
     def calc_multiplier(self):
-        multipliers = np.exp(self.daily_ds["delta_t_prime"].to_numpy() * self.daily_ds["rate"].to_numpy())
+        multipliers = np.exp(
+            self.daily_ds["delta_t_prime"].to_numpy() 
+            * self.daily_ds["rate"].to_numpy()
+        )
         self.daily_ds = self.daily_ds.assign(multiplier=("time", multipliers))
 
     def calc_daily_non_stationary_precipitation(self):
@@ -62,13 +64,15 @@ class StationaryConverter:
             self.daily_ds["precipitation"].to_numpy() 
             * self.daily_ds["multiplier"].to_numpy()
         )
-        self.daily_ds = self.daily_ds.assign(non_stationary_precipitation=("time",non_stationary_precipitation))
+        self.daily_ds = self.daily_ds.assign(
+            non_stationary_precipitation=("time",non_stationary_precipitation)
+        )
 
     def save_daily(self, filepath):
         print(f"Saving {filepath}")
         self.daily_ds.to_netcdf(filepath)
 
-    def calc_hourly_non_stationary_precipitation(self):
+    def calc_hourly_non_stationary_precipitation(self, date_to_t_tprime_converter):
         print("Calculating hourly non-stationary precipitation from daily")
         # Get date from hourly timestamps
         timestamps = self.hourly_ds["time"].to_numpy()
@@ -80,11 +84,18 @@ class StationaryConverter:
 
         # Apply multipliers to generate non-stationary precipitation
         non_stationary_precipitation = self.hourly_ds["precipitation"].to_numpy() * multipliers
-        self.hourly_ds = self.hourly_ds.assign(non_stationary_precipitation=("time", non_stationary_precipitation))
+        self.hourly_ds = self.hourly_ds.assign(
+            non_stationary_precipitation=("time", non_stationary_precipitation)
+        )
 
-        # Remove t_prime from hourly dataset because we didn't use that variable
-        self.hourly_ds = self.hourly_ds.drop("tprime")
-
+        t_primes = date_to_t_tprime_converter(dates)
+        self.hourly_ds = self.hourly_ds.assign(
+            t_prime=("time", t_primes)
+        )
+        
+        
     def save_hourly(self, filepath):
         print(f"Saving {filepath}")
         self.hourly_ds.to_netcdf(filepath)
+
+        

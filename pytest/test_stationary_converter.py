@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 import xarray as xr
-from stationary_converter import StationaryConverter
+from spg.stationary_converter import StationaryConverter
 
 def test_init():
     sc = StationaryConverter()
