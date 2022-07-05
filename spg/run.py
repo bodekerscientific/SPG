@@ -74,8 +74,7 @@ def plot_qq(target, predictions, output_path):
 
 
 def gen_preds(sp: SPG, data: pd.Series, start_date='1950-1-1', end_date='2100-1-1', 
-              plot_path=Path('./qq.png'), tprime=None, freq='D'):
-
+                        plot_path=Path('./qq.png'), tprime=None, freq='D'):
     times = pd.date_range(start=start_date, end=end_date, freq=freq)
     rd = sp.rainday
     cond = {'rain': None, 'rainday': jnp.array([[1]*rd.ar_depth])}
@@ -120,12 +119,13 @@ def setup_output(data, feat_samples, start_date, end_date, spin_up_steps=100, fr
     return output
 
 def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, spin_up_steps=1000, 
-                start_date=None, end_date=None, rng=None, sce='ssp245', use_tqdm=True, freq='H', max_pr=100, **kwargs):
+                            start_date=None, end_date=None, rng=None, sce='ssp245', use_tqdm=True, 
+                            freq='H', max_pr=100, **kwargs):
 
     assert freq in ['H', 'D'], 'Only hourly and daily SPGs are supported at this time.'
     cond_samples = 8 if freq == 'D' else 8*24
     
-    model, model_dict = train_spg.get_model(cfg.version, stats=stats)
+    model, model_dict = train_spg.get_model(cfg.version, stats=stats, min_pr = 0.1 if freq == 'H' else 1.0)
     feat_func = data_loader.generate_features if freq == 'H' else data_loader.generate_features_daily
 
     if 'loader_args' in model_dict:
@@ -180,7 +180,7 @@ def run_spg_mlp(data : pd.Series, params_path : Path, stats : dict, cfg, spin_up
     
 
 def run_save_proj(ens_args, cfg, data : pd.Series, params_path : Path, 
-                  start_date=pd.Timestamp(1980, 1, 1), end_date=pd.Timestamp(2100, 1, 1), freq='H', **kwargs):
+                              start_date=pd.Timestamp(1980, 1, 1), end_date=pd.Timestamp(2100, 1, 1), freq='H', **kwargs):
 
     sce, ens_num, idx = ens_args
     rng = random.PRNGKey(seed=971*(int(idx)+42))
@@ -198,13 +198,13 @@ def run_pool(cfg, **kwargs):
     print(f'Running {len(ens)} scenarios')
 
     with get_context('spawn').Pool(N_CPU) as p:
-        p.map(partial(run_save_proj, use_tqdm=True, cfg=cfg, **kwargs), ens)
+        p.map(partial(run_save_proj, use_tqdm=True, cfg=cfg, **kwargs), ens, chunksize=1)
 
 def get_params_path(cfg, epoch):
     return cfg.param_path / f'params_{str(epoch).zfill(3)}.data'
 
 def run_spg_multi(data_daily : pd.Series, params_path : Path, stats : dict, cfg, rng=None, #x_cond=4, 
-                  output_freq='H', in_freq = 24, use_tqdm=True, max_pr=100, cond_hr=12):
+                              output_freq='H', in_freq = 24, use_tqdm=True, max_pr=100, cond_hr=12):
     data_daily.values[data_daily.values < 1e-6] = 0.0
     
     def get_x(hourly_pr, last_pr, total_pr, next_pr):

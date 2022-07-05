@@ -87,7 +87,7 @@ def save_params(params, epoch : int, output_folder='./results/params'):
     
     return output_path
 
-def get_opt(params, max_lr=1e-3, min_lr=1e-7, max_steps=5000, spin_up_steps=300, wd=0.01, lookahead=5):
+def get_opt(params, max_lr=1e-3, min_lr=1e-7, max_steps=50000, spin_up_steps=300, wd=0.01, lookahead=5):
     sched = optax.warmup_cosine_decay_schedule(min_lr, max_lr, spin_up_steps, max_steps, min_lr)
     
     opt = optax.adamw(sched, weight_decay=wd)
@@ -335,7 +335,7 @@ def parse_model(model):
         raise ValueError(f'Invalid model {model}') 
     
 
-def get_model(version=None, path=None, stats=None):
+def get_model(version=None, path=None, stats=None, min_pr=1.0):
     assert not (path is None and version is None), 'You need to pass a path or a version of the model.'
     
     if path is None:
@@ -345,14 +345,16 @@ def get_model(version=None, path=None, stats=None):
         model_dict = yaml.load(f, Loader=yaml.FullLoader)
 
     print(f'Model: {model_dict}')
-        
+    
     dist = parse_model(model_dict['model'])
     base_cls = getattr(spg_dist, model_dict['base_spg'])
     model = base_cls(dist)
     
+    model.min_pr = min_pr
     if stats is not None:
         model.min_pr /= float(stats['y']['std'])
         
+    
     return model, model_dict
 
 
@@ -394,7 +396,7 @@ def get_config(name, version, location, ens=None, output_path=None):
 
 def train_wh(cfg, location, bs=256, load_stats=False, data_obs=None, freq='D', **kwargs):
     print('Loading weather@home')
-    _, model_dict = get_model(cfg.version)
+    _, model_dict = get_model(cfg.version,)
 
     loader_args = model_dict['loader_args'] if 'loader_args' in model_dict else {}
 
@@ -406,7 +408,7 @@ def train_wh(cfg, location, bs=256, load_stats=False, data_obs=None, freq='D', *
 
     tr_loader, val_loader = data_loader.get_data_loaders(ds_train, ds_valid, bs=bs)
     
-    model, model_dict = get_model(cfg.version, stats=val_loader.dataset.stats)
+    model, model_dict = get_model(cfg.version, stats=val_loader.dataset.stats, min_pr = 0.1 if freq == 'H' else 1.0)
 
     num_feat = len(ds_train[0][0])
     print(f'Num features {num_feat}')
@@ -457,7 +459,7 @@ def train_multiscale(model, cfg, load_stats=False, params_path=None, bs=256, **k
     train(model, num_feat=num_feat, tr_loader=tr_loader, valid_loader=val_loader, params=params, cfg=cfg, **kwargs)
 
 def train_splitter(loc, version, load_stats=False, bs=256, wh_epochs=20, train_split=True,
-                     output_path='/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/split/'):
+                            output_path='/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/split/'):
     # Train with w@h first then fine tune using obs.
     print('Training hourly splitter -----')
     version_split = version + '_split'
@@ -496,34 +498,3 @@ def run(location, cfg_name, model_version, seed=42):
 
 if __name__ == '__main__':
     fire.Fire(run)
-    
-    # if len(sys.argv) == 3:
-    #     location = sys.argv[1]
-    #     version = sys.argv[2]
-    # else:
-    #     raise ValueError('You need to pass the run location, version and epoch number' \
-    #                       ' as an argument, e.g python spg/train_spg.py dunedin v7')
-    # wh_fine_tune_obs(location, version=version)
-    
-    #bs = 256
-    #version_split = version + '_split'
-    
-    # cfg = get_config('base_hourly', version=version, location=location)
-    # model, model_dict = get_model(version)
-    # wandb.init(entity='bodekerscientific', project='SPG', config={'cfg' : cfg, 'model_dict' : model})
-    # logger = wandb.log
-    
-    # print(model_dict['loader_args'])
-    # #'/mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/v7/dunedin/params/params_022.data'
-    # train_obs(model=model, log=logger, cfg=cfg, resample=None, load_stats=False, ds_kwargs = model_dict['loader_args'])
-    
-    #train_daily(model=model, log=wandb.log, params_path=params_path, )
-    #train_wh(model=model, log
-    # =wandb.log)
-    
-    # rng = random.PRNGKey(42)
-    # y = jnp.array([1.0, 2.0, 0, 0.04, 1.0, 1.0]).astype(jnp.float32)
-    # x = y[:, None]
-    
-    # variables = model.init(random.PRNGKey(0), x, rng)    
-    # probs = model.apply(variables, x, y, method=model.log_prob)

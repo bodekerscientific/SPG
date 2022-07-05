@@ -1,12 +1,12 @@
-output_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/hourly/
+output_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/training_params/paper_version/hourly/
 input_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/station_data_hourly/
-ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly_paper/
+ens_path : /mnt/temp/projects/otago_uni_marsden/data_keep/spg/ensemble_hourly/
 
 train_func: train_obs
 train_kwargs : 
   freq : H
 
-num_ens : 10
+num_ens : 200
 num_valid : 20000
 
 max_values :
