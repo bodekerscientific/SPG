@@ -6,12 +6,12 @@ A single-site, hourly and daily deep learning based, stochastic precipitation ge
 
 First install Anaconda (or even better Mamba), the SPG has only been tested on Linux. Then the environment can be created with:
 
-   conda create --file environment.yml --name spg
-   conda activate spg
+    conda create --file environment.yml --name spg
+    conda activate spg
 
 You can install the spg as a package with:
 
-   python -m pip install --editable .
+    python -m pip install --editable .
 
 ### Configuration
 
@@ -21,8 +21,8 @@ Update the config files under base_daily or base_daily, add your new location an
 
 Choose the version you want to use, under config/modeles. v10 is recommended. Be sure to include the following if you want to train a stationary SPG (including a post-hoc correction version):
 
-   loader_args :
-       inc_tprime : FALSE
+    loader_args :
+      inc_tprime : FALSE
 
 v8 is the non-stationary version of v10, however cation should be used when training a non-stationary SPG on observations alone.
 
@@ -30,11 +30,11 @@ v8 is the non-stationary version of v10, however cation should be used when trai
 
 Training if spg with:
 
-   python spg/train_spg.py location config_base version will the
+    python spg/train_spg.py location config_base version will the
 
 For example:
 
-   python spg/train_spg.py auckland base_daily v10
+    python spg/train_spg.py auckland base_daily v10
 
 After training, review the validation qq plots under output_path and select an epoch that you want.
 
@@ -42,11 +42,11 @@ After training, review the validation qq plots under output_path and select an e
 
 You can now produce synthetic precipitation series using spg/run.py with your desired epoch:
 
-   python spg/run.py location
+    python spg/run.py location
 
 For example:
 
-   python spg/run.py auckland v10 9 base_daily
+    python spg/run.py auckland v10 9 base_daily
 
 The number of ensemble members, and the SSPs/RCPs to be used, are configured in the base config. By default, one run is produced over the historical time range, then an ensemble for each of the scenarios are produced from 1980, to 2100. If the stationary SPG is used, then the SSP/year will have no impact on the results.
 
