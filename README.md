@@ -50,6 +50,6 @@ For example:
 
 The number of ensemble members, and the SSPs/RCPs to be used, are configured in the base config. By default, one run is produced over the historical time range, then an ensemble for each of the scenarios are produced from 1980, to 2100. If the stationary SPG is used, then the SSP/year will have no impact on the results.
 
-### Applying a post-hoc correct will the
+### Applying a post-hoc correction
 
 After producing an ensemble of non-stationary simulations, notebooks/make-many-non-stationary.ipynb applies the post-hoc correction, however climate model simulations are needed to calculate the correction coefficients.
