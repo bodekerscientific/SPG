@@ -2,6 +2,8 @@
 
 A single-site, hourly and daily deep learning based, stochastic precipitation generator.
 
+See the [GMD paper](https://gmd.copernicus.org/articles/16/3785/2023/)
+
 ### Installation
 
 First install Anaconda (or even better Mamba), the SPG has only been tested on Linux. Then the environment can be created with:
@@ -30,7 +32,7 @@ v8 is the non-stationary version of v10, however cation should be used when trai
 
 Training if spg with:
 
-    python spg/train_spg.py location config_base version will the
+    python spg/train_spg.py location config_base version
 
 For example:
 
